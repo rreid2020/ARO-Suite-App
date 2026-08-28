@@ -8,7 +8,7 @@
     "dev:web": "vite",
     "dev:api": "tsx watch --env-file=.env.local src/server/listen.ts",
     "build": "prisma generate && tsc -b && npm run build:api && vite build",
-    "build:api": "esbuild src/server/vercel.ts --bundle --platform=node --format=cjs --outfile=api/server.js --packages=external",
+    "build:api": "esbuild src/server/vercel.ts --bundle --platform=node --format=esm --outfile=\"api/[[...route]].js\" --packages=external",
     "postinstall": "prisma generate",
     "preview": "vite preview",
     "test": "vitest run",

@@ -16,4 +16,3 @@ Thumbs.db
 clerk-config*.json
 .agents
 skills-lock.json
-api/server.js
