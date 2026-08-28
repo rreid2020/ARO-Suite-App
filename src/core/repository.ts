@@ -18,7 +18,7 @@
  */
 
 import { AppState } from './types';
-import { AuditEvent, ChangeEntry } from './writePath';
+import { AuditEvent, ChangeEntry, WriteRequest, WriteResult } from './writePath';
 
 export interface Repository {
   load(): Promise<AppState | null>;
@@ -30,6 +30,8 @@ export interface Repository {
   clear(): Promise<void>;
   /** Bytes currently held, for the session-size control on Authority & security. */
   size(): number;
+  /** Server-side mut() — HTTP repository only. */
+  commitWrite?<T>(req: WriteRequest<T>): Promise<WriteResult<T>>;
 }
 
 const KEY = 'aro-suite/state/v1';

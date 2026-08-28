@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import { useClerk } from '@clerk/react';
 import { useStore, useTenant, useUnit, useUnitWord } from '../core/store';
 import { FIRM_NAV, PHASES, stepById, stepsFor } from '../core/nav';
 import { ROLES } from '../core/authority';
@@ -16,6 +17,7 @@ import { Screen } from './screens';
 
 export function Shell() {
   const { state, ui, setUi } = useStore();
+  const { signOut } = useClerk();
   const tenant = useTenant();
   const unit = useUnit();
   const unitWord = useUnitWord();
@@ -118,7 +120,10 @@ export function Shell() {
             {ROLES.map((r) => <option key={r.id} value={r.id} style={{ color: 'var(--color-text)' }}>{r.label}</option>)}
           </select>
           <button
-            onClick={() => setUi({ signedIn: false, tenantId: null, unitId: null, setupTrail: null })}
+            onClick={() => {
+              setUi({ signedIn: false, tenantId: null, unitId: null, setupTrail: null });
+              void signOut();
+            }}
             style={{ background: 'transparent', border: '1px solid color-mix(in srgb,var(--color-bg) 40%,transparent)', color: 'var(--color-bg)', padding: '5px 8px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-body)' }}
           >Sign out</button>
         </div>

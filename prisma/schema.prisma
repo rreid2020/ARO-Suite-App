@@ -1,0 +1,577 @@
+// Domain model from reference/handoff/DOMAIN-MODEL.md.
+// Append-only tables have createdAt only — INVARIANTS §2: no update, no delete.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model Tenant {
+  id        String   @id
+  name      String
+  kind      String
+  env       String
+  domain    String
+  custom    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members        Membership[]
+  units          ReportingUnit[]
+  curves         Curve[]
+  accounts       Account[]
+  segments       CodingSegment[]
+  postingRules   PostingRule[]
+  settings       TenantSettings?
+  authority      Authority[]
+  changeLog      ChangeLog[]
+  auditEvents    AuditEvent[]
+
+  @@index([name])
+  @@map("tenant")
+}
+
+model AppUser {
+  id          String   @id @default(cuid())
+  clerkUserId String?  @unique
+  name        String
+  email       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships Membership[]
+
+  @@index([email])
+  @@map("app_user")
+}
+
+model Membership {
+  id          String    @id @default(cuid())
+  tenantId    String
+  userId      String
+  role        String
+  mfa         String    @default("Not enrolled")
+  isOwner     Boolean   @default(false)
+  lastSeen    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([userId])
+  @@index([tenantId])
+  @@map("membership")
+}
+
+model TenantSettings {
+  tenantId        String   @id
+  defaults        Json
+  frameworks      Json
+  retentionYears  Int      @default(7)
+  legalHold       Boolean  @default(false)
+  sso             Boolean  @default(false)
+  scim            Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_settings")
+}
+
+model Authority {
+  id        String   @id @default(cuid())
+  tenantId  String
+  domain    String
+  mode      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, domain])
+  @@index([tenantId])
+  @@map("authority")
+}
+
+model ReportingUnit {
+  id                   String   @id
+  tenantId             String
+  entity               String
+  client               String
+  fyEnd                String
+  currency             String
+  sector               String
+  partnerUserId        String
+  frameworkId          String
+  jurisdiction         String
+  calendarType         String
+  latePolicy           String
+  status               String
+  stage                String
+  dayCount             String
+  glTotal              Float?
+  conversionAgreed     Boolean  @default(false)
+  noteGenerated        Boolean  @default(false)
+  yearLocked           Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assumptions  Assumptions?
+  obligations  Obligation[]
+  periods      Period[]
+  extracts     Extract[]
+  batches      JournalBatch[]
+  freezes      Freeze[]
+  attestedGates AttestedGate[]
+  signatures   Signature[]
+  changeLog    ChangeLog[]
+  auditEvents  AuditEvent[]
+
+  @@index([tenantId])
+  @@map("reporting_unit")
+}
+
+model Assumptions {
+  reportingUnitId      String   @id
+  inflation            Float
+  contingency          Float
+  curveId              String
+  priorCurveId         String?
+  priorInflation       Float?
+  revaluedOn           String?
+  termConvention       String
+  materialityUsd       Float
+  materialityPct       Float
+  extrapolationPolicy  String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  unit ReportingUnit @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+
+  @@map("assumptions")
+}
+
+model Curve {
+  tenantId       String
+  id             String
+  name           String
+  currency       String
+  source         String
+  basis          String
+  interpolation  String
+  extrapolation  String
+  asAt           String
+  isDraft        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  points CurvePoint[]
+
+  @@id([tenantId, id])
+  @@index([tenantId])
+  @@map("curve")
+}
+
+model CurvePoint {
+  tenantId  String
+  curveId   String
+  termYears Float
+  rate      Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  curve Curve @relation(fields: [tenantId, curveId], references: [tenantId, id], onDelete: Cascade)
+
+  @@id([tenantId, curveId, termYears])
+  @@map("curve_point")
+}
+
+model Obligation {
+  id               String   @id
+  reportingUnitId  String
+  ref              String
+  description      String
+  costEstimateDate String
+  settlementDate   String
+  payload          Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  unit        ReportingUnit     @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+  costLines   CostLine[]
+  revisions   Revision[]
+  layers      Layer[]
+  events      ObligationEvent[]
+  settlements Settlement[]
+  tickmarks   Tickmark[]
+
+  @@index([reportingUnitId])
+  @@map("obligation")
+}
+
+model CostLine {
+  id            String   @id
+  obligationId  String
+  description   String
+  qty           Float
+  unitRate      Float
+  source        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@map("cost_line")
+}
+
+model Revision {
+  id            String   @id
+  obligationId  String
+  kind          String
+  amount        Float?
+  newDate       String?
+  effectiveDate String
+  reason        String
+  evidenceRef   String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@map("revision")
+}
+
+/// Present for US GAAP / ASPE. IFRS continues to derive layers; this table stays empty until that engine work lands.
+model Layer {
+  id            String   @id @default(cuid())
+  obligationId  String
+  aroseOn       String
+  amount        Float
+  rate          Float
+  lifeYears     Float
+  method        String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@map("layer")
+}
+
+model ObligationEvent {
+  id            String   @id
+  obligationId  String
+  periodId      String
+  type          String
+  eventDate     String
+  amount        Float
+  derived       Boolean  @default(false)
+  sourceRowRef  String?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@index([periodId])
+  @@map("obligation_event")
+}
+
+model Settlement {
+  id            String   @id
+  obligationId  String
+  kind          String
+  pct           Float
+  actualCost    Float
+  settledOn     String
+  posted        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@map("settlement")
+}
+
+model Period {
+  id               String   @id
+  reportingUnitId  String
+  no               Int
+  fiscalYear       Int
+  code             String
+  starts           String
+  ends             String
+  status           String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  unit    ReportingUnit  @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+  batches JournalBatch[]
+  extracts Extract[]
+
+  @@index([reportingUnitId])
+  @@map("period")
+}
+
+model Account {
+  id                String   @id
+  tenantId          String
+  code              String
+  name              String
+  className         String   @map("class")
+  engineRole        String
+  requiredSegments  Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lines  JournalLine[]
+
+  @@index([tenantId])
+  @@unique([tenantId, code])
+  @@map("account")
+}
+
+model CodingSegment {
+  id         String   @id
+  tenantId   String
+  ord        Int
+  name       String
+  required   Boolean
+  permitted  Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("coding_segment")
+}
+
+model PostingRule {
+  id             String   @id
+  tenantId       String
+  eventType      String
+  debitRole      String
+  creditRole     String
+  engineEmitted  Boolean
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("posting_rule")
+}
+
+model JournalBatch {
+  id               String    @id
+  reportingUnitId  String
+  periodId         String
+  number           String
+  status           String
+  approvedBy       String?
+  postedBy         String?
+  reversedBy       String?
+  postedAt         DateTime?
+  reverses         String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  unit   ReportingUnit @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+  period Period        @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  lines  JournalLine[]
+
+  @@index([reportingUnitId])
+  @@index([periodId])
+  @@map("journal_batch")
+}
+
+model JournalLine {
+  id            String  @id @default(cuid())
+  batchId       String
+  ord           Int
+  accountId     String
+  coding        Json
+  debit         Float
+  credit        Float
+  obligationId  String?
+  eventId       String?
+  suspense      Boolean @default(false)
+  createdAt     DateTime @default(now())
+
+  batch   JournalBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  account Account      @relation(fields: [accountId], references: [id])
+
+  @@unique([batchId, ord])
+  @@index([batchId])
+  @@map("journal_line")
+}
+
+model Extract {
+  id                String    @id
+  reportingUnitId   String
+  kind              String
+  filename          String
+  hash              String
+  rows              Int
+  receivedAt        DateTime
+  declared          String
+  targetPeriodId    String
+  acceptedAt        DateTime?
+  template          String
+  templateValidated Boolean
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  unit   ReportingUnit @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+  period Period        @relation(fields: [targetPeriodId], references: [id])
+
+  @@index([reportingUnitId])
+  @@map("extract")
+}
+
+model Freeze {
+  id               String   @id
+  reportingUnitId  String
+  version          Int
+  hash             String
+  population       Int
+  total            Float
+  createdAt        DateTime @default(now())
+  createdBy        String
+  rows             Json
+  updatedAt        DateTime @updatedAt
+
+  unit     ReportingUnit @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+  samples  Sample[]
+  tickmarks Tickmark[]
+
+  @@index([reportingUnitId])
+  @@map("freeze")
+}
+
+model Sample {
+  id         String   @id
+  freezeId   String
+  method     String
+  size       Int
+  seed       Int
+  createdBy  String
+  createdAt  DateTime @default(now())
+  picked     Json
+  updatedAt  DateTime @updatedAt
+
+  freeze Freeze @relation(fields: [freezeId], references: [id], onDelete: Cascade)
+
+  @@index([freezeId])
+  @@map("sample")
+}
+
+model Tickmark {
+  id            String    @id
+  obligationId  String
+  freezeId      String
+  preparer      String?
+  reviewer      String?
+  markedAt      DateTime?
+  note          String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  freeze     Freeze     @relation(fields: [freezeId], references: [id], onDelete: Cascade)
+
+  @@index([obligationId])
+  @@index([freezeId])
+  @@map("tickmark")
+}
+
+model Signature {
+  id               String   @id @default(cuid())
+  reportingUnitId  String
+  stage            String
+  by               String
+  at               DateTime
+  recalcStamp      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  unit ReportingUnit @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+
+  @@index([reportingUnitId])
+  @@map("signature")
+}
+
+model AttestedGate {
+  id               String    @id
+  reportingUnitId  String
+  label            String
+  attestedBy       String?
+  attestedAt       DateTime?
+  note             String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  unit ReportingUnit @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+
+  @@index([reportingUnitId])
+  @@map("attested_gate")
+}
+
+model ChangeLog {
+  id               String   @id
+  tenantId         String
+  reportingUnitId  String?
+  record           String
+  recordLabel      String
+  field            String
+  oldValue         Json?
+  newValue         Json?
+  actor            String
+  at               DateTime
+  restoredFrom     String?
+  createdAt        DateTime @default(now())
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unit   ReportingUnit? @relation(fields: [reportingUnitId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, at])
+  @@index([reportingUnitId])
+  @@map("change_log")
+}
+
+model AuditEvent {
+  id               String   @id
+  tenantId         String
+  reportingUnitId  String?
+  actor            String
+  action           String
+  kind             String
+  detail           String
+  at               DateTime
+  createdAt        DateTime @default(now())
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unit   ReportingUnit? @relation(fields: [reportingUnitId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, at])
+  @@index([reportingUnitId])
+  @@map("audit_event")
+}

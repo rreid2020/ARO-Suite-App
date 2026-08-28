@@ -6,16 +6,18 @@
  * decides. That is INVARIANTS §3's "single write path" expressed as the only
  * mutation API the UI is given.
  *
- * UI state (`ui`) is separate and moves freely — README's state mapping table
- * calls `sel`, `views`, `sort`, `filters` and `page` genuine client state.
+ * Domain writes are re-run on the server with the membership role, not the
+ * role the client claimed.
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth, useUser } from '@clerk/react';
 import { AppState, UiState } from './types';
 import { AuditEvent, ChangeEntry, Refusal, WriteRequest, WriteResult, mut, note, restore, setPath } from './writePath';
 import { Domain } from './authority';
-import { LocalStorageRepository, Repository } from './repository';
-import { seedState } from '../seed';
+import { Repository } from './repository';
+import { HttpRepository } from './httpRepository';
+import { emptyAppState } from './emptyState';
 
 interface WriteArgs<T> {
   domain: Domain;
@@ -24,9 +26,7 @@ interface WriteArgs<T> {
   before: T;
   after: T;
   action: string;
-  /** Fields this write may not touch, with the reason, by name. */
   guarded?: Record<string, string>;
-  /** Applies the accepted value back into the state tree. */
   apply: (s: AppState, value: T) => void;
 }
 
@@ -34,17 +34,17 @@ export interface Store {
   state: AppState;
   ui: UiState;
   setUi: (patch: Partial<UiState>) => void;
-  /** The only way to change a domain record. */
   write: <T>(args: WriteArgs<T>) => WriteResult<T>;
-  /** INVARIANTS §2 — a restore is a new logged change, never an edit. */
   restoreChange: (entry: ChangeEntry) => void;
-  /** Record an action that is not a field edit — a post, a lock, an export. */
   record: (action: string, kind: AuditEvent['kind'], detail: string) => void;
-  /** Escape hatch for non-domain state (freezes, samples) that still logs. */
   apply: (action: string, kind: AuditEvent['kind'], detail: string, fn: (s: AppState) => void) => void;
   reset: () => void;
   storageBytes: number;
   repo: Repository;
+  ready: boolean;
+  createTenant: (name: string, kind: string) => Promise<string>;
+  loadSample: () => Promise<void>;
+  deleteTenant: (id: string) => Promise<void>;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -63,26 +63,40 @@ const initialUi: UiState = {
 };
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const repo = useRef<Repository>(new LocalStorageRepository()).current;
-  const [state, setState] = useState<AppState>(() => seedState());
+  const { getToken, isSignedIn, isLoaded } = useAuth();
+  const { user } = useUser();
+  const repo = useRef<HttpRepository>(new HttpRepository(() => getToken())).current;
+  const [state, setState] = useState<AppState>(emptyAppState);
   const [ui, setUiState] = useState<UiState>(initialUi);
   const [bytes, setBytes] = useState(0);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      setState(emptyAppState());
+      setUiState(initialUi);
+      setLoaded(false);
+      return;
+    }
     let live = true;
     repo.load().then((s) => {
       if (!live) return;
       if (s) setState(s);
       setLoaded(true);
+      setBytes(repo.size());
+    }).catch((err: Error) => {
+      if (!live) return;
+      setLoaded(true);
+      setUiState((u) => ({ ...u, toast: { kind: 'refused', text: err.message } }));
     });
     return () => { live = false; };
-  }, [repo]);
+  }, [repo, isLoaded, isSignedIn]);
 
   useEffect(() => {
-    if (!loaded) return;
-    repo.save(state).then(() => setBytes(repo.size()));
-  }, [state, loaded, repo]);
+    if (!loaded || !isSignedIn) return;
+    repo.save(state).then(() => setBytes(repo.size())).catch(() => { /* next write retries */ });
+  }, [state, loaded, repo, isSignedIn]);
 
   const setUi = useCallback((patch: Partial<UiState>) => {
     setUiState((u) => ({ ...u, ...patch }));
@@ -122,27 +136,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setState((s) => {
         const next = structuredClone(s);
         if (result.ok) args.apply(next, result.value);
-        // Append-only — INVARIANTS §2. Never edited, never removed.
         next.chg = [...result.changes, ...next.chg];
         next.log = [...result.audit, ...next.log];
         return next;
       });
 
-      repo.appendChanges(result.changes);
-      repo.appendAudit(result.audit);
+      void repo.commitWrite(req).then((server) => {
+        if (server.ok === result.ok) return;
+        setUi({ toast: toastFor(server) });
+        repo.load().then((s) => { if (s) setState(s); });
+      }).catch((err: Error) => setUi({ toast: { kind: 'refused', text: err.message } }));
+
       setUi({ toast: toastFor(result) });
       return result;
     },
     [ui.tenantId, ui.unitId, ui.userName, ui.role, state.authority, repo, setUi],
   );
 
-  /**
-   * A restore actually puts the old value back, as an ordinary write that
-   * carries `restoredFrom`. It goes through `mut()` like everything else, so a
-   * restore into a domain the tenant does not own is refused exactly as the
-   * original edit would have been. The original entry stands untouched —
-   * history reads forward and is never rewritten.
-   */
   const restoreChange = useCallback(
     (entry: ChangeEntry) => {
       const unitId = entry.unitId;
@@ -151,8 +161,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         : undefined;
 
       if (!target) {
-        // Bulk-edit and paste entries are summaries of a write, not a record
-        // that can be put back field by field. Say so rather than pretending.
         setUi({
           toast: {
             kind: 'refused',
@@ -165,21 +173,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const after = structuredClone(target);
       setPath(after as object, entry.field, entry.before);
 
-      const result = restore(
-        {
-          domain: 'register',
-          tenantId: entry.tenantId,
-          unitId,
-          record: entry.record,
-          recordLabel: entry.recordLabel,
-          before: target,
-          after,
-          actor: ui.userName || 'Unknown',
-          role: ui.role,
-          authority: state.authority[entry.tenantId],
-        },
-        entry,
-      );
+      const req = {
+        domain: 'register' as const,
+        tenantId: entry.tenantId,
+        unitId,
+        record: entry.record,
+        recordLabel: entry.recordLabel,
+        before: target,
+        after,
+        actor: ui.userName || 'Unknown',
+        role: ui.role,
+        authority: state.authority[entry.tenantId],
+      };
+      const result = restore(req, entry);
 
       setState((s) => {
         const next = structuredClone(s);
@@ -192,45 +198,76 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         next.log = [...result.audit, ...next.log];
         return next;
       });
+      void repo.commitWrite({ ...req, action: `Restore ${entry.field}` });
       setUi({ toast: toastFor(result) });
     },
-    [state.data, state.authority, ui.userName, ui.role, setUi],
+    [state.data, state.authority, ui.userName, ui.role, repo, setUi],
   );
 
   const record = useCallback(
     (action: string, kind: AuditEvent['kind'], detail: string) => {
-      setState((s) => ({
-        ...s,
-        log: [note(ui.tenantId!, ui.unitId ?? undefined, ui.userName || 'Unknown', action, kind, detail), ...s.log],
-      }));
+      const entry = note(ui.tenantId!, ui.unitId ?? undefined, ui.userName || 'Unknown', action, kind, detail);
+      setState((s) => ({ ...s, log: [entry, ...s.log] }));
+      void repo.appendAudit([entry]);
     },
-    [ui.tenantId, ui.unitId, ui.userName],
+    [ui.tenantId, ui.unitId, ui.userName, repo],
   );
 
   const apply = useCallback(
     (action: string, kind: AuditEvent['kind'], detail: string, fn: (s: AppState) => void) => {
+      const entry = note(ui.tenantId ?? 'install', ui.unitId ?? undefined, ui.userName || 'Unknown', action, kind, detail);
       setState((s) => {
         const next = structuredClone(s);
         fn(next);
-        next.log = [note(ui.tenantId!, ui.unitId ?? undefined, ui.userName || 'Unknown', action, kind, detail), ...next.log];
+        next.log = [entry, ...next.log];
         return next;
       });
+      void repo.appendAudit([entry]);
       setUi({ toast: { kind: 'ok', text: detail } });
     },
-    [ui.tenantId, ui.unitId, ui.userName, setUi],
+    [ui.tenantId, ui.unitId, ui.userName, repo, setUi],
   );
 
   const reset = useCallback(() => {
-    repo.clear().then(() => {
-      setState(seedState());
-      setUiState(initialUi);
-    });
+    setState(emptyAppState());
+    setUiState(initialUi);
+  }, []);
+
+  const createTenant = useCallback(async (name: string, kind: string) => {
+    const result = await repo.createTenant(name, kind);
+    setState(result.state);
+    setLoaded(true);
+    return result.tenantId;
   }, [repo]);
 
+  const loadSample = useCallback(async () => {
+    const next = await repo.loadSample();
+    setState(next);
+    setLoaded(true);
+  }, [repo]);
+
+  const deleteTenant = useCallback(async (id: string) => {
+    await repo.deleteTenant(id);
+    const next = await repo.load();
+    if (next) setState(next);
+  }, [repo]);
+
+  const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || ui.userName;
+
   const value = useMemo<Store>(
-    () => ({ state, ui, setUi, write, restoreChange, record, apply, reset, storageBytes: bytes, repo }),
-    [state, ui, setUi, write, restoreChange, record, apply, reset, bytes, repo],
+    () => ({
+      state, ui, setUi, write, restoreChange, record, apply, reset, storageBytes: bytes, repo,
+      ready: loaded || !isSignedIn,
+      createTenant, loadSample, deleteTenant,
+    }),
+    [state, ui, setUi, write, restoreChange, record, apply, reset, bytes, repo, loaded, isSignedIn, createTenant, loadSample, deleteTenant],
   );
+
+  // Keep the signed-in name in UI state for the audit actor without looping.
+  const nameRef = useRef(displayName);
+  if (displayName && displayName !== nameRef.current) {
+    nameRef.current = displayName;
+  }
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -240,8 +277,6 @@ export function useStore(): Store {
   if (!s) throw new Error('useStore must be used inside a StoreProvider');
   return s;
 }
-
-/* ── Selectors ──────────────────────────────────────────────────────────── */
 
 export function useTenant() {
   const { state, ui } = useStore();
@@ -259,7 +294,6 @@ export function useUnitData() {
   return ui.unitId ? state.data[ui.unitId] ?? null : null;
 }
 
-/** "Engagement" and "reporting unit" are one object under two names. */
 export function useUnitWord() {
   const tenant = useTenant();
   return tenant?.kind === 'Auditor' ? 'Engagement' : 'Reporting unit';

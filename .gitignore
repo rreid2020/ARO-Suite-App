@@ -10,3 +10,9 @@ fixtures/
 Thumbs.db
 .vscode
 .claude
+.vercel
+.env*
+!.env.example
+clerk-config*.json
+.agents
+skills-lock.json
