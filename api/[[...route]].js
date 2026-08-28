@@ -1,6 +1,3 @@
-// src/server/vercel.ts
-import { handle } from "hono/vercel";
-
 // src/server/app.ts
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -636,9 +633,9 @@ import { createClerkClient, verifyToken } from "@clerk/backend";
 import { HTTPException } from "hono/http-exception";
 
 // src/server/loadEnv.ts
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import { config as loadEnvFile } from "dotenv";
+loadEnvFile({ path: ".env.local" });
+loadEnvFile();
 
 // src/server/db.ts
 import { PrismaClient } from "@prisma/client";
@@ -1968,20 +1965,23 @@ app.post("/api/seed", async (c) => {
 });
 
 // src/server/vercel.ts
-var handler = handle(app);
-var vercel_default = handler;
-var GET = handler;
-var POST = handler;
-var PUT = handler;
-var DELETE = handler;
-var PATCH = handler;
-var config2 = { runtime: "nodejs" };
+var GET = app.fetch.bind(app);
+var POST = app.fetch.bind(app);
+var PUT = app.fetch.bind(app);
+var DELETE = app.fetch.bind(app);
+var PATCH = app.fetch.bind(app);
+var OPTIONS = app.fetch.bind(app);
+var HEAD = app.fetch.bind(app);
+var runtime = "nodejs";
+var maxDuration = 30;
 export {
   DELETE,
   GET,
+  HEAD,
+  OPTIONS,
   PATCH,
   POST,
   PUT,
-  config2 as config,
-  vercel_default as default
+  maxDuration,
+  runtime
 };

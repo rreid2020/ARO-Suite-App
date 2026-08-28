@@ -1,4 +1,4 @@
-import { config } from 'dotenv';
+import { config as loadEnvFile } from 'dotenv';
 
-config({ path: '.env.local' });
-config();
+loadEnvFile({ path: '.env.local' });
+loadEnvFile();
