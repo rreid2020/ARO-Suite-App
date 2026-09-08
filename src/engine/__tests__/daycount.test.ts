@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { days360, days360eu, term360, termYears, actualDays, isLeapYear, nextDay, parseISO, isValidDate, maskDateInput, addMonths, addDays, priorYearEnd } from '../dates';
+import { days360, days360eu, term360, termYears, actualDays, isLeapYear, nextDay, parseISO, isValidDate, maskDateInput, addMonths, addDays, addTermYears, priorYearEnd } from '../dates';
 
 describe('days360 — US/NASD, matching Excel DAYS360(a,b,FALSE)', () => {
   const cases: [string, string, number, string][] = [
@@ -118,5 +118,11 @@ describe('date helpers are total — ENGINE-SPEC §8', () => {
   it('priorYearEnd is the same month-day one year earlier', () => {
     expect(priorYearEnd('2027-03-31')).toBe('2026-03-31');
     expect(priorYearEnd('2024-02-29')).toBe('2023-02-28');
+  });
+
+  it('addTermYears is the inverse of termYears on 30/360 for whole years', () => {
+    expect(addTermYears('2026-04-01', 15)).toBe('2041-04-01');
+    expect(termYears('2026-04-01', addTermYears('2026-04-01', 15))).toBeCloseTo(15, 6);
+    expect(addTermYears('2020-09-01', 0)).toBe('2020-09-01');
   });
 });

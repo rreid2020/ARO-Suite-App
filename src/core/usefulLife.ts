@@ -8,7 +8,7 @@
  * A term revision does not silently change UL — it raises a pending flag.
  */
 
-import { isValidDate, nextDay, termYears, type DayCount } from '../engine/dates';
+import { isValidDate, nextDay, termYears, addTermYears, type DayCount } from '../engine/dates';
 import { settlementAsAt, settlementInForce, type Obligation } from '../engine/derive';
 import type { ObligationEvent } from '../engine/rollforward';
 import { years as formatYears, num, parseNumber } from './format';
@@ -426,4 +426,61 @@ export function nextUlDraftFromTca(opts: {
     totalUl: opts.formTotal && opts.formTotal !== prevTotal ? opts.formTotal : tcaUlText(opts.nextTca?.totalUl),
     expiredUl: opts.formExpired && opts.formExpired !== prevExpired ? opts.formExpired : tcaUlText(opts.nextTca?.expiredUl),
   };
+}
+
+/** Cost-estimate date plus remaining UL years under the unit day count. */
+export function suggestedSettlementDate(
+  costEstimateDate: string,
+  remainingUl: number | null | undefined,
+  dayCount: DayCount | string,
+): string {
+  const rem = asYears(remainingUl);
+  if (rem == null || rem < 0 || !isValidDate(costEstimateDate)) return '';
+  return addTermYears(costEstimateDate, rem, dayCount);
+}
+
+export type NewAroLifeForm = {
+  totalUl: string;
+  expiredUl: string;
+  assetAcquisitionDate: string;
+  costEstimateDate: string;
+  settlementDate: string;
+};
+
+function lifeFromForm(
+  form: NewAroLifeForm,
+  tca: { totalUl?: number | null; expiredUl?: number | null } | null | undefined,
+  dayCount: DayCount | string,
+) {
+  return evaluateNewAroLifeDraft({
+    totalUlText: form.totalUl,
+    expiredUlText: form.expiredUl,
+    tca,
+    assetAcquisitionDate: form.assetAcquisitionDate,
+    costEstimateDate: form.costEstimateDate,
+    settlementDate: form.settlementDate,
+    dayCount,
+  });
+}
+
+/**
+ * Follow remaining UL into expected settlement until the user types a
+ * different date. An empty field, or one that still matches the previous
+ * suggestion, updates when Total UL, Expired UL, or the cost estimate date change.
+ */
+export function withSettlementFromRemaining<T extends NewAroLifeForm>(
+  previous: T,
+  next: T,
+  dayCount: DayCount | string,
+  previousTca?: { totalUl?: number | null; expiredUl?: number | null } | null,
+  nextTca?: { totalUl?: number | null; expiredUl?: number | null } | null,
+): T {
+  const prevSuggested = suggestedSettlementDate(
+    previous.costEstimateDate, lifeFromForm(previous, previousTca, dayCount).remainingUl, dayCount,
+  );
+  const nextSuggested = suggestedSettlementDate(
+    next.costEstimateDate, lifeFromForm(next, nextTca ?? previousTca, dayCount).remainingUl, dayCount,
+  );
+  const follow = !next.settlementDate.trim() || next.settlementDate === prevSuggested;
+  return { ...next, settlementDate: follow ? nextSuggested : next.settlementDate };
 }

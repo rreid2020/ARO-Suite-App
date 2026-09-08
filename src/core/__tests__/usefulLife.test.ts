@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyUlAlignment, dismissUlAlignment, evaluateNewAroLifeDraft, expiredUlFromAcquisition, formatUl,
-  newObligationUlIssue, nextUlDraftFromTca, proposeUlAlignment, remainingUlYears, ulAlignmentPending,
-  ulOutOfLine, usefulLifeAsAt, yearsToPeriods, yearsToSettlement, termToSettlementAtYearStart,
+  newObligationUlIssue, nextUlDraftFromTca, proposeUlAlignment, remainingUlYears, suggestedSettlementDate,
+  ulAlignmentPending, ulOutOfLine, usefulLifeAsAt, yearsToPeriods, yearsToSettlement, termToSettlementAtYearStart,
+  withSettlementFromRemaining,
 } from '../usefulLife';
 import type { Obligation, ReportingUnit } from '../types';
 import type { Period } from '../periods';
@@ -183,6 +184,28 @@ describe('new obligation UL vs settlement', () => {
     });
     expect(fromListing.totalUl).toBe('30');
     expect(fromListing.expiredUl).toBe('5');
+  });
+
+  it('defaults expected settlement from remaining UL after the cost estimate date', () => {
+    expect(suggestedSettlementDate('2026-04-01', 15, '30/360 US (DAYS360)')).toBe('2041-04-01');
+    const draft = {
+      totalUl: '25', expiredUl: '10', assetAcquisitionDate: '2006-04-01',
+      costEstimateDate: '2026-03-31', settlementDate: '',
+    };
+    const next = withSettlementFromRemaining(draft, draft, '30/360 US (DAYS360)');
+    expect(next.settlementDate).toBe('2041-03-31');
+    const later = withSettlementFromRemaining(
+      next,
+      { ...next, totalUl: '20' },
+      '30/360 US (DAYS360)',
+    );
+    expect(later.settlementDate).toBe('2036-03-31');
+    const kept = withSettlementFromRemaining(
+      { ...next, settlementDate: '2051-03-31' },
+      { ...next, totalUl: '20', settlementDate: '2051-03-31' },
+      '30/360 US (DAYS360)',
+    );
+    expect(kept.settlementDate).toBe('2051-03-31');
   });
 });
 

@@ -10,7 +10,7 @@ import {
   evaluateNewAroLifeDraft, expiredUlFromAcquisition, tcaUlText, type NewObligationUlIssue,
 } from '../../core/usefulLife';
 import { TERM_CONVENTIONS } from '../../engine/curve';
-import { DAY_COUNTS } from '../../engine/dates';
+import { DAY_COUNTS, maskDateInput } from '../../engine/dates';
 
 export { SheetTable, SheetTh, SheetStatus, useSheet } from './Sheet';
 export type { SheetColumn } from './Sheet';
@@ -199,12 +199,8 @@ export function NewAroLifeFields({
     : listingUlHint(expiredUl, listingExpired, 'Expired UL');
   const expiredHint = ulFieldHint(life.issue, 'expiredUl', expiredFallback);
   const remainingHint = life.remainingUl != null
-    ? 'Total UL minus Expired UL. Expected settlement must leave at least this many years.'
+    ? 'Total UL minus Expired UL. Expected settlement defaults to this many years after the cost estimate date.'
     : undefined;
-  const settlementFallback = life.remainingUl != null
-    ? `Must be at least remaining UL (${num(life.remainingUl)} yr).`
-    : undefined;
-  const settlementHint = ulFieldHint(life.issue, 'settlement', settlementFallback);
 
   return (
     <>
@@ -242,18 +238,53 @@ export function NewAroLifeFields({
       </Field>
       <Field
         label="Remaining UL"
-        help="Total UL minus Expired UL of the ARO asset. Years to settlement must be at least this remaining life."
+        help="Total UL minus Expired UL of the ARO asset. Expected settlement defaults to the cost estimate date plus this remaining life. A later settlement date is allowed."
         hint={remainingHint}
       >
         <input className="input num" value={life.remainingUl == null ? '' : num(life.remainingUl)} readOnly />
       </Field>
+    </>
+  );
+}
+
+export function NewAroSettlementFields({
+  settlementDate, yearsToSettlement, remainingUl, issue, suggested,
+  onSettlementDate,
+}: {
+  settlementDate: string;
+  yearsToSettlement: number | null;
+  remainingUl: number | null;
+  issue: NewObligationUlIssue | null;
+  suggested: string;
+  onSettlementDate: (value: string) => void;
+}) {
+  const defaulted = Boolean(suggested && settlementDate === suggested);
+  const fallback = defaulted && remainingUl != null
+    ? `Defaulted from remaining UL (${num(remainingUl)} yr after the cost estimate date). Change to a later date if settlement is further out.`
+    : remainingUl != null
+      ? `Must be at least remaining UL (${num(remainingUl)} yr).`
+      : undefined;
+  const settlementHint = ulFieldHint(issue, 'settlement', fallback);
+  return (
+    <>
       <Field
-        label="Years to settlement"
-        help="From the cost estimate date to expected settlement. Must be equal to or greater than remaining UL."
+        label="Expected settlement"
+        help="Defaults to the cost estimate date plus remaining UL of the ARO asset. You can move it later; it cannot be sooner than remaining UL."
         hint={settlementHint.hint}
         hintTone={settlementHint.hintTone}
       >
-        <input className="input num" value={life.yearsToSettlement == null ? '' : num(life.yearsToSettlement)} readOnly />
+        <input
+          className="input"
+          value={settlementDate}
+          onChange={(e) => onSettlementDate(maskDateInput(e.target.value))}
+          placeholder="YYYY-MM-DD"
+        />
+      </Field>
+      <Field
+        label="Years to settlement"
+        help="From the cost estimate date to expected settlement. Must be equal to or greater than remaining UL."
+      >
+        <input className="input num" value={yearsToSettlement == null ? '' : num(yearsToSettlement)} readOnly />
       </Field>
     </>
   );

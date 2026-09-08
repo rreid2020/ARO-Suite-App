@@ -222,6 +222,28 @@ export function addDays(s: string, n: number): string {
   return toISO({ y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() });
 }
 
+/**
+ * The date `years` after `from` under the selected day count. Inverse of
+ * `termYears` for 30/360 on the same calendar day (whole months).
+ */
+export function addTermYears(
+  from: string,
+  years: number,
+  dayCount: DayCount | string = DEFAULT_DAY_COUNT,
+): string {
+  if (!parseISO(from) || !Number.isFinite(years)) return from;
+  switch (dayCount) {
+    case 'Actual/365':
+      return addDays(from, Math.round(years * 365));
+    case 'Actual/360':
+      return addDays(from, Math.round(years * 360));
+    case 'Actual/Actual':
+      return addDays(from, Math.round(years * 365.25));
+    default:
+      return addMonths(from, Math.round(years * 12));
+  }
+}
+
 /** Chronological compare. Malformed dates sort last, stably. */
 export function cmpDate(a: string, b: string): number {
   const pa = parseISO(a);

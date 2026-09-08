@@ -21,7 +21,7 @@ import { canEdit } from '../../core/authority';
 import { extraColumnKey, extraColumnName, isOpeningBalanceField, obligationColumnNames, obligationColumns, obligationField, openingLocked, patchObligationField, remainingUl } from '../../core/openingLoad';
 import { tcaAssetStatusOf, tcaByObligationId, tcaColumnNames, tcaForObligation } from '../../core/tcaListing';
 import { classCodeOf, classKey, classNameOf, findAssetClass } from '../../core/assetClass';
-import { formatUl, evaluateNewAroLifeDraft, nextUlDraftFromTca, ulAlignmentPending, usefulLifeAsAt, termToSettlementAtYearStart } from '../../core/usefulLife';
+import { formatUl, evaluateNewAroLifeDraft, nextUlDraftFromTca, suggestedSettlementDate, ulAlignmentPending, usefulLifeAsAt, termToSettlementAtYearStart, withSettlementFromRemaining } from '../../core/usefulLife';
 import { fiscalYearStart } from '../../core/periods';
 import { postNewAro } from '../../core/inYear';
 import { assetBooks, openPeriod, type AssetBooks } from '../../core/periodClose';
@@ -29,7 +29,7 @@ import { registerBooksById, unpostedInYearCount, type RegisterBooks } from '../.
 import { Obligation, TcaAsset, type EstimateColumn } from '../../core/types';
 import { isValidDate, maskDateInput, priorYearEnd } from '../../engine/dates';
 import { SCOPING_REASONS, VARIANCE_CAUSES } from '../../seed';
-import { Block, Field, NewAroEstimate, NewAroLifeFields, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, num, parseNumber, pct, SheetStatus, SheetTable, SheetTh, Stats, Tag, useSheet } from '../components';
+import { Block, Field, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, num, parseNumber, pct, SheetStatus, SheetTable, SheetTh, Stats, Tag, useSheet } from '../components';
 import type { EstimateLineDraft, EstimateMode } from '../components';
 import { SheetFilter } from '../sheet';
 import { download, S } from '../../xlsx/write';
@@ -687,15 +687,28 @@ export function Register() {
                       ? `TCA acquisition date on the listing is ${listingAcq}.`
                       : undefined}
             >
-              <input className="input" value={newAro.assetAcquisitionDate} onChange={(e) => setNewAro({ ...newAro, assetAcquisitionDate: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" />
+              <input className="input" value={newAro.assetAcquisitionDate} onChange={(e) => {
+                const assetAcquisitionDate = maskDateInput(e.target.value);
+                setNewAro((v) => withSettlementFromRemaining(v, { ...v, assetAcquisitionDate }, unit.dayCount, linkedTca, linkedTca));
+              }} placeholder="YYYY-MM-DD" />
             </Field>
             <Field
               label="Cost estimate date"
               help={`The price date of the cost build-up. Defaults to the prior financial year end. This year ends ${unit.fyEnd}.`}
             >
-              <input className="input" value={newAro.costEstimateDate} onChange={(e) => setNewAro({ ...newAro, costEstimateDate: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" />
+              <input className="input" value={newAro.costEstimateDate} onChange={(e) => {
+                const costEstimateDate = maskDateInput(e.target.value);
+                setNewAro((v) => withSettlementFromRemaining(v, { ...v, costEstimateDate }, unit.dayCount, linkedTca, linkedTca));
+              }} placeholder="YYYY-MM-DD" />
             </Field>
-            <Field label="Expected settlement"><input className="input" value={newAro.settlementDate} onChange={(e) => setNewAro({ ...newAro, settlementDate: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" /></Field>
+            <NewAroSettlementFields
+              settlementDate={newAro.settlementDate}
+              yearsToSettlement={life.yearsToSettlement}
+              remainingUl={life.remainingUl}
+              issue={life.issue}
+              suggested={suggestedSettlementDate(newAro.costEstimateDate, life.remainingUl, unit.dayCount)}
+              onSettlementDate={(settlementDate) => setNewAro((v) => ({ ...v, settlementDate }))}
+            />
             <Field label="Effective date"><input className="input" value={newAro.aroseOn} onChange={(e) => setNewAro({ ...newAro, aroseOn: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" /></Field>
             <Field label="TCA asset number" help="The related row on the master TCA listing. The ARO asset acquisition date defaults from that row's acquisition date.">
               <input className="input" value={newAro.assetId} onChange={(e) => {
@@ -711,13 +724,19 @@ export function Register() {
                   prevTca,
                   nextTca,
                 });
-                setNewAro({
-                  ...newAro,
-                  assetId,
-                  assetAcquisitionDate: keepUserDate ? newAro.assetAcquisitionDate : (nextDefault || newAro.assetAcquisitionDate),
-                  totalUl: ul.totalUl,
-                  expiredUl: ul.expiredUl,
-                });
+                setNewAro(withSettlementFromRemaining(
+                  newAro,
+                  {
+                    ...newAro,
+                    assetId,
+                    assetAcquisitionDate: keepUserDate ? newAro.assetAcquisitionDate : (nextDefault || newAro.assetAcquisitionDate),
+                    totalUl: ul.totalUl,
+                    expiredUl: ul.expiredUl,
+                  },
+                  unit.dayCount,
+                  prevTca,
+                  nextTca,
+                ));
               }} />
             </Field>
             <Field label="ARO asset number" help="The retirement-cost asset identifier. Distinct from the TCA asset number.">
@@ -749,8 +768,8 @@ export function Register() {
               costEstimateDate={newAro.costEstimateDate}
               settlementDate={newAro.settlementDate}
               dayCount={unit.dayCount}
-              onTotalUl={(totalUl) => setNewAro((v) => ({ ...v, totalUl }))}
-              onExpiredUl={(expiredUl) => setNewAro((v) => ({ ...v, expiredUl }))}
+              onTotalUl={(totalUl) => setNewAro((v) => withSettlementFromRemaining(v, { ...v, totalUl }, unit.dayCount, linkedTca, linkedTca))}
+              onExpiredUl={(expiredUl) => setNewAro((v) => withSettlementFromRemaining(v, { ...v, expiredUl }, unit.dayCount, linkedTca, linkedTca))}
             />
             <Field label="ARO asset in productive use" help="No, and remaining UL is nil: charge the new obligation to expense. No retirement-cost asset is capitalized.">
               <select className="input" value={newAro.inProductiveUse ? 'Yes' : 'No'}

@@ -37,11 +37,11 @@ import {
   type TcaSyncAction,
 } from '../../core/tcaSync';
 import { parseNumber } from '../../core/format';
-import { evaluateNewAroLifeDraft, tcaUlText } from '../../core/usefulLife';
+import { evaluateNewAroLifeDraft, suggestedSettlementDate, tcaUlText, withSettlementFromRemaining } from '../../core/usefulLife';
 import type { EstimateColumn, TcaAsset, TcaAssetStatus, TcaScope } from '../../core/types';
 import { isValidDate, maskDateInput, priorYearEnd } from '../../engine/dates';
 import {
-  Block, Empty, Field, NewAroEstimate, NewAroLifeFields, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, SheetTable, Stats,
+  Block, Empty, Field, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, SheetTable, Stats,
 } from '../components';
 import type { EstimateLineDraft, EstimateMode } from '../components';
 import { moneyFooter, obligationColumnKeys, obligationExtractColumns, obligationMoneyTotals, tcaListingColumns, tcaMoneyTotals } from './openingListings';
@@ -209,18 +209,31 @@ export function Scope() {
 
   const startCreate = (action: TcaSyncAction) => {
     const asset = tcaAssetByNumber(data.tcaAssets, action.assetNumber);
+    const costEstimateDate = priorYearEnd(unit.fyEnd);
+    const assetAcquisitionDate = asset?.acquisitionDate ?? '';
+    const totalUl = tcaUlText(asset?.totalUl);
+    const expiredUl = tcaUlText(asset?.expiredUl);
+    const life = evaluateNewAroLifeDraft({
+      totalUlText: totalUl,
+      expiredUlText: expiredUl,
+      tca: asset,
+      assetAcquisitionDate,
+      costEstimateDate,
+      settlementDate: '',
+      dayCount: unit.dayCount,
+    });
     setDisposeFor(null);
     setCreateFor(action.id);
     setCreate({
       ref: uniqueObligationRef(data.obligations, `ARO-${action.assetNumber}`),
       description: action.description,
-      costEstimateDate: priorYearEnd(unit.fyEnd),
-      settlementDate: '',
+      costEstimateDate,
+      settlementDate: suggestedSettlementDate(costEstimateDate, life.remainingUl, unit.dayCount),
       aroseOn: open?.ends ?? '',
       aroAssetNumber: suggestedAroAssetNumber(data.obligations, action.assetNumber),
-      assetAcquisitionDate: asset?.acquisitionDate ?? '',
-      totalUl: tcaUlText(asset?.totalUl),
-      expiredUl: tcaUlText(asset?.expiredUl),
+      assetAcquisitionDate,
+      totalUl,
+      expiredUl,
       estimateMode: 'single',
       estimateLines: [emptyEstimateLine()],
       estimateColumns: DEFAULT_ESTIMATE_COLUMNS,
@@ -317,15 +330,28 @@ export function Scope() {
                   ? `TCA acquisition date on the listing is ${listingAcq}.`
                   : undefined}
           >
-            <input className="input" value={create.assetAcquisitionDate} onChange={(e) => setCreate({ ...create, assetAcquisitionDate: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" />
+            <input className="input" value={create.assetAcquisitionDate} onChange={(e) => {
+              const assetAcquisitionDate = maskDateInput(e.target.value);
+              setCreate((v) => withSettlementFromRemaining(v, { ...v, assetAcquisitionDate }, unit.dayCount, asset, asset));
+            }} placeholder="YYYY-MM-DD" />
           </Field>
           <Field
             label="Cost estimate date"
             help={`The price date of the cost build-up. Defaults to the prior financial year end. This year ends ${unit.fyEnd}.`}
           >
-            <input className="input" value={create.costEstimateDate} onChange={(e) => setCreate({ ...create, costEstimateDate: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" />
+            <input className="input" value={create.costEstimateDate} onChange={(e) => {
+              const costEstimateDate = maskDateInput(e.target.value);
+              setCreate((v) => withSettlementFromRemaining(v, { ...v, costEstimateDate }, unit.dayCount, asset, asset));
+            }} placeholder="YYYY-MM-DD" />
           </Field>
-          <Field label="Expected settlement"><input className="input" value={create.settlementDate} onChange={(e) => setCreate({ ...create, settlementDate: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" /></Field>
+          <NewAroSettlementFields
+            settlementDate={create.settlementDate}
+            yearsToSettlement={life.yearsToSettlement}
+            remainingUl={life.remainingUl}
+            issue={life.issue}
+            suggested={suggestedSettlementDate(create.costEstimateDate, life.remainingUl, unit.dayCount)}
+            onSettlementDate={(settlementDate) => setCreate((v) => ({ ...v, settlementDate }))}
+          />
           <Field label="Effective date"><input className="input" value={create.aroseOn} onChange={(e) => setCreate({ ...create, aroseOn: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" /></Field>
           <Field label="ARO asset number"><input className="input" value={create.aroAssetNumber} onChange={(e) => setCreate({ ...create, aroAssetNumber: e.target.value })} /></Field>
           <NewAroLifeFields
@@ -336,8 +362,8 @@ export function Scope() {
             costEstimateDate={create.costEstimateDate}
             settlementDate={create.settlementDate}
             dayCount={unit.dayCount}
-            onTotalUl={(totalUl) => setCreate((v) => ({ ...v, totalUl }))}
-            onExpiredUl={(expiredUl) => setCreate((v) => ({ ...v, expiredUl }))}
+            onTotalUl={(totalUl) => setCreate((v) => withSettlementFromRemaining(v, { ...v, totalUl }, unit.dayCount, asset, asset))}
+            onExpiredUl={(expiredUl) => setCreate((v) => withSettlementFromRemaining(v, { ...v, expiredUl }, unit.dayCount, asset, asset))}
           />
           <NewAroEstimate
             mode={create.estimateMode}
