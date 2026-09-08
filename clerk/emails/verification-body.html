@@ -1,0 +1,43 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{otp_code}} is your {{app.name}} verification code</title>
+  <!--[if mso]><style type="text/css">body, table, td, a { font-family: Arial, Helvetica, sans-serif !important; }</style><![endif]-->
+</head>
+<body style="margin:0; padding:0; background-color:#f3f2f2; font-family:Helvetica, Arial, sans-serif;">
+  <span style="color:transparent; display:none; height:0; max-height:0; max-width:0; opacity:0; overflow:hidden; visibility:hidden; width:0;">Your {{app.name}} verification code is {{otp_code}}</span>
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%; background-color:#f3f2f2;">
+    <tr>
+      <td align="center" valign="top" style="padding:48px 16px;">
+        <table cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px; max-width:600px; border-collapse:collapse;">
+          <tr>
+            <td bgcolor="#2f6b47" style="background-color:#2f6b47; padding:20px 32px;">
+              <table cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td valign="middle" style="padding-right:12px;">
+                    <img src="https://aro-suite-app.vercel.app/aro-mark.png" width="32" height="32" alt="" style="display:block; border:0; width:32px; height:32px;" />
+                  </td>
+                  <td valign="middle" style="font-family:Helvetica, Arial, sans-serif; font-size:16px; line-height:20px; font-weight:800; letter-spacing:0.08em; color:#f3f2f2;">ARO SUITE</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="#ffffff" style="background-color:#ffffff; border:2px solid #d7d3d3; border-top:0; padding:32px 32px 40px;">
+              <h1 style="margin:0; font-family:Helvetica, Arial, sans-serif; font-size:24px; line-height:30px; font-weight:800; letter-spacing:-0.02em; color:#201e1d;">Verification code</h1>
+              <p style="margin:16px 0 0; font-family:Helvetica, Arial, sans-serif; font-size:15px; line-height:22px; color:#201e1d;">Enter this code when {{app.name}} asks for it:</p>
+              <p style="margin:20px 0 0; font-family:Helvetica, Arial, sans-serif; font-size:32px; line-height:40px; font-weight:800; letter-spacing:0.08em; color:#2f6b47;">{{otp_code}}</p>
+              <p style="margin:16px 0 0; font-family:Helvetica, Arial, sans-serif; font-size:14px; line-height:21px; color:#605d5d;">Do not share this code. It was requested from <b>{{requested_from}}</b> at <b>{{requested_at}}</b>.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 8px 0; font-family:Helvetica, Arial, sans-serif; font-size:12px; line-height:18px; color:#7d7979;">&copy; {{current_year}} {{app.name}}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

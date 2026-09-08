@@ -28,7 +28,7 @@ export const DOMAINS: DomainDef[] = [
   { id: 'estimates', label: 'Estimates & revisions', covers: 'The cost build-up, cost revisions and timing revisions.' },
   { id: 'assumptions', label: 'Assumptions, curve & materiality', covers: 'Inflation, contingency, the discount curve, the term convention and the materiality thresholds.' },
   { id: 'periods', label: 'Periods, calendar & close', covers: 'The accounting periods, their status, the close calendar and the year-end lock sequence.' },
-  { id: 'journals', label: 'Journals, postings & reconciliation', covers: 'Journal batches, posting, suspense and the sub-ledger to GL reconciliation.' },
+  { id: 'journals', label: 'Journals, postings & reconciliation', covers: 'Month-end accretion and amortization, journal batches, posting, suspense and the sub-ledger to GL reconciliation.' },
   { id: 'evidence', label: 'Evidence, sampling & sign-off', covers: 'Freezes, samples, tickmarks, exception memos and the signature record.' },
 ];
 
@@ -134,6 +134,22 @@ export const canEdit = (role: string) => roleById(role).edit;
 export const canAdmin = (role: string) => roleById(role).admin;
 export const canCreateUnit = (role: string) => roleById(role).createEng;
 export const signLevel = (role: string) => roleById(role).sign;
+/** Firm admin or engagement partner — they own tenant reference data and company setup. */
+export const canConfigureTenant = (role: string) => canAdmin(role) || signLevel(role) === 2;
+
+/** Why a roster Remove must be refused. Null means the membership can go. */
+export function memberRemovalBlocker(opts: {
+  targetUserId: string;
+  targetRole: string;
+  actorUserId: string;
+  partnerCount: number;
+}): string | null {
+  if (opts.targetUserId === opts.actorUserId) return 'You cannot remove yourself.';
+  if (signLevel(opts.targetRole) === 2 && opts.partnerCount <= 1) {
+    return 'The last engagement partner cannot be removed — with none, nothing could ever be signed off.';
+  }
+  return null;
+}
 
 /** INVARIANTS §7: "preparer approves, reviewer or partner posts". */
 export const canPost = (role: string) => {

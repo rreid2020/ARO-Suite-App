@@ -124,6 +124,17 @@ describe('leap-year shift — ENGINE-SPEC §9.2', () => {
       expect(p.tD).toBeCloseTo(term360(fy, st), 12);
     }
   });
+
+  it('does not apply the leap-year shift under actual day counts', () => {
+    const actual = price({
+      direct: 1_000_000, contingency: 0, costEstimateDate: '2024-06-30',
+      settlementDate: '2030-06-30', fyEnd: '2024-12-31', inflation: 0.025,
+      curve: yearCurve, termConvention: 'Round up to whole year (SAP)',
+      dayCount: 'Actual/365',
+    });
+    expect(actual.leap).toBe(false);
+    expect(actual.mcd).toBe('2024-12-31');
+  });
 });
 
 describe('term convention — ENGINE-SPEC §9.4', () => {
@@ -152,7 +163,7 @@ describe('term convention — ENGINE-SPEC §9.4', () => {
     expect(runs[0]).toBeLessThan(runs[1]);
   });
 
-  it('SAP rounding is the default and never changes — INVARIANTS §9', () => {
+  it('SAP rounding is the default when no convention is passed', () => {
     expect(curveTermOf(yearCurve, 4.2).term).toBe(5);
     expect(curveTermOf(yearCurve, 4.0).term).toBe(4);
   });

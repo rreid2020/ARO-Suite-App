@@ -9,7 +9,7 @@ standalone, dependency-free library.
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 102 tests
+npm test         # 563 tests
 npm run build
 ```
 
@@ -25,7 +25,7 @@ different authority setting.
 | `src/engine/__tests__/` | The fixtures from `ENGINE-SPEC.md` §9 |
 | `src/core/` | Authority, the single write path, periods, gates, the store |
 | `src/core/__tests__/` | `INVARIANTS.md` §2–§5, §7, §8 as executable acceptance criteria |
-| `src/xlsx/` | The .xlsx writer, ported from the prototype. Formulas, not values |
+| `src/xlsx/` | The .xlsx reader and writer, ported from the prototype. Formulas, not values |
 | `src/ui/` | Shell and screens — 9 tenant screens, 26 workflow steps in five phases |
 | `src/seed/` | Synthetic seed data, generated from a fixed PRNG seed |
 | `reference/` | The prototype the port was read from, for comparison |
@@ -101,6 +101,48 @@ committed**. `golden.test.ts` is the harness: drop an extract at
 becomes the acceptance gate. Until then it reports itself as not gating rather
 than passing silently. **Phase 0 is not complete without it.**
 
+## Mode 1 — recalculation & completeness
+
+`BUILD-SEQUENCE.md` Phase 2, ported from `design/ARO Recalculation.dc.html`.
+Recalculates the provision independently over extracts from a source system and
+reports the variance against the figures that system published.
+
+| Path | What it is |
+| --- | --- |
+| `src/engine/recalc.ts` | The chain for one extract row, the SAP term convention, the materiality test, the two-step variance bridge and the accretion schedule |
+| `src/core/recalc.ts` | The register: portfolio totals, the completeness control total, the exception list, and the REP04/REP06 merges |
+| `src/core/recalcImport.ts` | Staging an extract — curve vintages, the curve table, the lines the merges read, the mapping preview |
+| `src/core/recalcFormulas.ts` | The calculation restated as Excel, fifteen rows, self-contained |
+| `src/xlsx/read.ts` | The .xlsx reader. No dependencies, streams through `DecompressionStream` — the client's file never leaves the machine |
+| `src/xlsx/recalcWorkbook.ts` | The four-sheet export: Results, Assumptions, Curve, Method |
+| `src/ui/screens/recalc.tsx` | Six screens across Prepare, Measure and Assure |
+
+**It belongs to the auditor tenancy, not to a reporting entity.** Mode 1 tests a
+figure some *other* system produced. A reporting entity running this product as
+its module of record is the source system and has nothing to recalculate against
+— which is why the old `recalc` step was retired (`nav.ts`,
+`UNIT_SCREEN_ALIASES`). An auditor is the opposite case, so the six steps sit
+alongside intake and normalisation, which are auditor-only for the same reason.
+`nav.test.ts` pins both halves.
+
+Three things are worth knowing:
+
+- **The engine keeps its own term lookup.** `recalcCurveTerm` floors at one year
+  and carries a rounding tolerance; `curveTermOf` in `curve.ts` does neither,
+  because it serves Mode 2, offers three conventions and is pinned by existing
+  tests. Mode 1 has one convention and needs both guards, so it keeps three
+  lines rather than adding flags to a function the rest of the engine depends on.
+- **Raw extract rows are never persisted.** The register stores the figures it
+  needs; the *Imported data* viewer holds the source rows in memory for the
+  session and says so. They are the client's data, and storing them would be
+  keeping the extract rather than the conclusion drawn from it.
+- **No seed data was lifted from the prototype.** The prototype's three
+  obligations are described in its own source as "lifted from the client Master
+  Sheet", and the handoff README says none of the bundle's data should ship. A
+  new register starts empty; the demo tenants get a register generated from the
+  same fixed PRNG as the rest of the seed, perturbed so the variance analysis has
+  something real to show.
+
 ## Deliberate departures from the prototype
 
 - **Storage.** The prototype's `localStorage` blob is not reproduced. Persistence
@@ -111,6 +153,10 @@ than passing silently. **Phase 0 is not complete without it.**
 - **The role list** was in the truncated tail of the prototype and is
   reconstructed from the capability model in `INVARIANTS.md` §7 (`edit`, `sign`
   0/1/2, `createEng`, `admin`). Worth checking against the original.
+- **The Mode 1 register UI** is `SheetTable`, not the prototype's hand-rolled
+  column-filter panel, sort menu and pager. The component library already does
+  all three, and the handoff asks for layout and state to be rebuilt in the
+  target codebase's patterns rather than lifted.
 - **Routing** is a lookup in `src/ui/screens/index.tsx` rather than a URL router,
   matching the prototype's single-page shape. Every screen is a plain component,
   so dropping in a real router is a change to that file alone.
@@ -119,10 +165,6 @@ than passing silently. **Phase 0 is not complete without it.**
 
 Scoped out rather than stubbed, and named so the gap is visible:
 
-- **Framework policy is modelled but not wired** — this is decision 2 in the
-  handoff README. US GAAP and ASPE need layers *stored* with a rate per layer;
-  PSAS needs optional discounting. The Frameworks screen and the Layers step both
-  say so on their face rather than showing IFRS figures under another name.
 - **Multi-currency, translation reserve and consolidation** (Phase 4).
 - **Close calendar and period-close checklist as editable tenant reference data** —
   the screens render the templates but do not yet take full CRUD.

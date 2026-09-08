@@ -8,9 +8,8 @@ import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit, canLockPeriod, roleById, signLevel } from '../../core/authority';
 import { YEAR_END_GATES, runGates, YearEndState } from '../../core/gates';
-import { Block, Empty, Field, money, money2, pct, Stats, Tag } from '../components';
+import { Block, Empty, Field, currency, num, SheetTable, Stats, Tag } from '../components';
 import { download, S } from '../../xlsx/write';
-import { sourceOf } from './Register';
 
 /* ══ Evidence & freeze ═════════════════════════════════════════════════ */
 
@@ -25,7 +24,7 @@ export function Freeze() {
     let h = 0;
     for (const r of rows) h = (h * 31 + Math.round(r.pv * 100)) | 0;
     apply('Freeze dataset', 'write',
-      `Froze the dataset as version ${data.freezes.length + 1}: ${rows.length} obligations totalling ${money2(derived.total)}. A re-import is a new version with a diff, never an edit of this one.`,
+      `Froze the dataset as version ${data.freezes.length + 1}: ${rows.length} obligations totalling ${currency(derived.total, unit.currency)}. A re-import is a new version with a diff, never an edit of this one.`,
       (s) => {
         s.data[unit.id].freezes.push({
           id: `fz-${Date.now().toString(36)}`, unitId: unit.id,
@@ -62,23 +61,19 @@ export function Freeze() {
         {data.freezes.length === 0 ? (
           <Empty>Nothing frozen yet. Sampling and the completeness pack both work from a freeze, so this is the first Assure step.</Empty>
         ) : (
-          <div className="scroll-x">
-            <table className="table">
-              <thead><tr><th className="num">Version</th><th>Taken</th><th>By</th><th className="num">Population</th><th className="num">Total</th><th>Hash</th></tr></thead>
-              <tbody>
-                {[...data.freezes].reverse().map((f) => (
-                  <tr key={f.id}>
-                    <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>v{f.version}</td>
-                    <td>{f.createdAt.replace('T', ' ').slice(0, 16)}</td>
-                    <td>{f.createdBy}</td>
-                    <td className="num">{f.population}</td>
-                    <td className="num">{money2(f.total)}</td>
-                    <td className="muted">{f.hash}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <SheetTable
+            rows={[...data.freezes].reverse()}
+            rowKey={(f) => f.id}
+            noun="versions"
+            columns={[
+              { key: 'version', header: 'Version', kind: 'number', thClassName: 'num', tdClassName: 'num', tdStyle: { fontFamily: 'var(--font-heading)', fontWeight: 800 }, value: (f) => f.version, cell: (f) => `v${f.version}` },
+              { key: 'taken', header: 'Taken', kind: 'date', value: (f) => f.createdAt, cell: (f) => f.createdAt.replace('T', ' ').slice(0, 16) },
+              { key: 'by', header: 'By', value: (f) => f.createdBy, cell: (f) => f.createdBy },
+              { key: 'population', header: 'Population', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (f) => f.population, cell: (f) => num(f.population) },
+              { key: 'total', header: 'Total', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (f) => f.total, cell: (f) => currency(f.total, unit.currency) },
+              { key: 'hash', header: 'Hash', value: (f) => f.hash, tdClassName: 'muted', cell: (f) => f.hash },
+            ]}
+          />
         )}
       </Block>
 
@@ -88,27 +83,23 @@ export function Freeze() {
             { label: 'Added', value: String(diff.added.length) },
             { label: 'Removed', value: String(diff.removed.length) },
             { label: 'Changed PV', value: String(diff.changed.length) },
-            { label: 'Movement in total', value: money2(diff.movement) },
+            { label: 'Movement in total', value: currency(diff.movement, unit.currency) },
           ]} />
           {diff.changed.length > 0 && (
-            <div className="scroll-x">
-              <table className="table">
-                <thead><tr><th>Reference</th><th className="num">Was</th><th className="num">Now</th><th className="num">Movement</th></tr></thead>
-                <tbody>
-                  {diff.changed.slice(0, 30).map((r) => {
-                    const b = prev!.rows.find((x) => x.obligationId === r.obligationId)!;
-                    return (
-                      <tr key={r.obligationId}>
-                        <td>{r.ref}</td>
-                        <td className="num">{money2(b.pv)}</td>
-                        <td className="num">{money2(r.pv)}</td>
-                        <td className="num derived">{money2(r.pv - b.pv)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <SheetTable
+              rows={diff.changed.slice(0, 30).map((r) => {
+                const b = prev!.rows.find((x) => x.obligationId === r.obligationId)!;
+                return { r, was: b.pv };
+              })}
+              rowKey={(row) => row.r.obligationId}
+              noun="changes"
+              columns={[
+                { key: 'ref', header: 'Obligation Number', value: (row) => row.r.ref, cell: (row) => row.r.ref },
+                { key: 'was', header: 'Was', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.was, cell: (row) => currency(row.was, unit.currency) },
+                { key: 'now', header: 'Now', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.r.pv, cell: (row) => currency(row.r.pv, unit.currency) },
+                { key: 'movement', header: 'Movement', kind: 'number', thClassName: 'num', tdClassName: 'num derived', value: (row) => row.r.pv - row.was, cell: (row) => currency(row.r.pv - row.was, unit.currency) },
+              ]}
+            />
           )}
         </Block>
       )}
@@ -205,27 +196,23 @@ export function Sampling() {
 
       {sample && (
         <Block kicker="Selected" title={`${sample.picked.length} obligations — ${sample.method}, seed ${sample.seed}`}>
-          <div className="scroll-x">
-            <table className="table">
-              <thead><tr><th>Reference</th><th>Description</th><th className="num">Provision</th><th>Preparer</th><th>Reviewer</th></tr></thead>
-              <tbody>
-                {sample.picked.map((id) => {
-                  const o = data.obligations.find((x) => x.id === id);
-                  const row = freeze.rows.find((r) => r.obligationId === id);
-                  const tm = data.tickmarks.find((t) => t.obligationId === id && t.freezeId === freeze.id);
-                  return (
-                    <tr key={id}>
-                      <td>{o?.ref}</td>
-                      <td style={{ whiteSpace: 'normal', maxWidth: 240 }}>{o?.description}</td>
-                      <td className="num">{money2(row?.pv ?? 0)}</td>
-                      <td>{tm?.preparer ?? (canEdit(ui.role) && <button className="btn btn-ghost btn-sm" onClick={() => tick(id, 'preparer')}>Tick</button>)}</td>
-                      <td>{tm?.reviewer ?? (signLevel(ui.role) !== null && signLevel(ui.role)! >= 1 && <button className="btn btn-ghost btn-sm" onClick={() => tick(id, 'reviewer')}>Tick</button>)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <SheetTable
+            rows={sample.picked.map((id) => ({
+              id,
+              o: data.obligations.find((x) => x.id === id),
+              row: freeze.rows.find((r) => r.obligationId === id),
+              tm: data.tickmarks.find((t) => t.obligationId === id && t.freezeId === freeze.id),
+            }))}
+            rowKey={(row) => row.id}
+            noun="obligations"
+            columns={[
+              { key: 'ref', header: 'Obligation Number', value: (row) => row.o?.ref, cell: (row) => row.o?.ref },
+              { key: 'desc', header: 'Description', value: (row) => row.o?.description, tdStyle: { whiteSpace: 'normal', maxWidth: 240 }, cell: (row) => row.o?.description },
+              { key: 'pv', header: 'Provision', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.row?.pv ?? 0, cell: (row) => currency(row.row?.pv ?? 0, unit.currency) },
+              { key: 'preparer', header: 'Preparer', value: (row) => row.tm?.preparer, cell: (row) => row.tm?.preparer ?? (canEdit(ui.role) && <button className="btn btn-ghost btn-sm" onClick={() => tick(row.id, 'preparer')}>Tick</button>) },
+              { key: 'reviewer', header: 'Reviewer', value: (row) => row.tm?.reviewer, cell: (row) => row.tm?.reviewer ?? (signLevel(ui.role) !== null && signLevel(ui.role)! >= 1 && <button className="btn btn-ghost btn-sm" onClick={() => tick(row.id, 'reviewer')}>Tick</button>) },
+            ]}
+          />
         </Block>
       )}
     </>
@@ -235,19 +222,13 @@ export function Sampling() {
 /* ══ Completeness pack ═════════════════════════════════════════════════ */
 
 export function Complete() {
-  const { ui, apply } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const derived = useDerived()!;
 
   const rows = derived.rows.map((d) => {
     const o = data.obligations.find((x) => x.id === d.obligationId)!;
-    const source = sourceOf(o, d.pv);
-    return { o, d, source, variance: d.pv - source };
-  });
-  const uncaused = rows.filter((r) => {
-    const threshold = Math.max(unit.materialityUsd, Math.abs(r.source) * unit.materialityPct);
-    return Math.abs(r.variance) >= threshold && !r.o.varianceCause;
+    return { o, d };
   });
 
   /** INVARIANTS §6 — hashed from the register, assumptions, curve and policy. */
@@ -284,7 +265,7 @@ export function Complete() {
           ['Term convention', unit.termConvention],
           ['Materiality (absolute)', { v: unit.materialityUsd, s: S.money }],
           ['Materiality (relative)', { v: unit.materialityPct, s: S.rate }],
-          ['Recalculation stamp', stamp],
+          ['Measurement stamp', stamp],
           [],
           ['Signatures'],
           ...data.signatures.map((s) => [s.stage, s.by, s.at.slice(0, 19).replace('T', ' ')]),
@@ -294,10 +275,10 @@ export function Complete() {
       {
         name: 'Population',
         rows: [
-          ['Reference', 'Description', 'Provision', 'Source', 'Variance', 'Cause'].map((h) => ({ v: h, s: S.head })),
-          ...rows.map((r) => [r.o.ref, r.o.description, { v: r.d.pv, s: S.money }, { v: r.source, s: S.money }, { v: r.variance, s: S.money }, r.o.varianceCause ?? '']),
+          ['Obligation Number', 'Description', 'Provision'].map((h) => ({ v: h, s: S.head })),
+          ...rows.map((r) => [r.o.ref, r.o.description, { v: r.d.pv, s: S.money }]),
         ] as never,
-        cols: [14, 34, 16, 16, 15, 28],
+        cols: [14, 34, 16],
         freeze: 1,
       },
       {
@@ -322,18 +303,17 @@ export function Complete() {
     <>
       <Stats items={[
         { label: 'Population', value: String(rows.length) },
-        { label: 'Provision', value: `${unit.currency} ${money(derived.total)}` },
+        { label: 'Provision', value: currency(derived.total, unit.currency) },
         { label: 'Roll-forward foots', value: derived.annual.foots ? 'Yes' : 'No', tone: derived.annual.foots ? 'ok' : 'bad' },
-        { label: 'Uncaused material variances', value: String(uncaused.length), tone: uncaused.length ? 'bad' : 'ok' },
         { label: 'Freezes', value: String(data.freezes.length) },
       ]} />
 
-      <Block kicker="Completeness pack" title="Population, recalculation, variance, roll-forward, statement"
-        note="The pack carries a recalculation stamp hashed from the register, the assumptions, the curve and the policy. Changing a figure invalidates the signature, and the product says so rather than letting a stale signature stand."
+      <Block kicker="Completeness pack" title="Population, roll-forward, statement"
+        note="The pack carries a measurement stamp hashed from the register, the assumptions, the curve and the policy. Changing a figure invalidates the signature, and the product says so rather than letting a stale signature stand."
         actions={<button className="btn btn-secondary btn-sm" onClick={exportPack}>Export the pack</button>}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 10 }}>
           <div style={{ background: 'var(--color-surface)', padding: '10px 12px' }}>
-            <div className="kicker">Recalculation stamp</div>
+            <div className="kicker">Measurement stamp</div>
             <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }}>{stamp}</div>
           </div>
           <div style={{ background: 'var(--color-surface)', padding: '10px 12px' }}>
@@ -344,16 +324,8 @@ export function Complete() {
 
         {invalidated && (
           <div className="note-panel" style={{ borderLeftColor: 'var(--bad)', marginTop: 12 }}>
-            A figure has changed since this pack was signed. The recalculation stamp no longer matches the one signed,
+            A figure has changed since this pack was signed. The measurement stamp no longer matches the one signed,
             so the signature is invalid and the pack must be re-signed.
-          </div>
-        )}
-
-        {uncaused.length > 0 && (
-          <div className="note-panel" style={{ borderLeftColor: 'var(--warn)', marginTop: 12 }}>
-            {uncaused.length} material variance{uncaused.length === 1 ? ' has' : 's have'} no recorded cause:{' '}
-            {uncaused.slice(0, 8).map((u) => u.o.ref).join(', ')}
-            {uncaused.length > 8 ? ' …' : ''}. Record a cause on the Recalculation step before signing.
           </div>
         )}
       </Block>
@@ -377,8 +349,8 @@ export function Review() {
       .filter((p) => p.residual !== 0),
     conversionAgreed: data.conversionAgreed,
     conversionNote: data.conversionAgreed
-      ? 'The opening balance conversion has been agreed to the legacy closing balance.'
-      : 'The opening balance conversion has not been agreed. See Opening balances.',
+      ? 'Opening balances are locked and agreed to the opening trial balance totals.'
+      : 'Opening balances have not been locked. Reconcile the opening register to the trial balance and lock them in Setup.',
     batches: data.batches.map((b) => ({ number: b.number, status: b.status })),
     subLedgerTotal: derived.total,
     glTotal: data.glTotal,
@@ -407,55 +379,44 @@ export function Review() {
     <>
       <Block kicker="Sign-off" title="Three stages"
         note="Preparer approves, reviewer or partner posts, partner only reverses. A stage can only be signed by a role at or above it.">
-        <div className="scroll-x">
-          <table className="table">
-            <thead><tr><th>Stage</th><th>Signed by</th><th>When</th><th>Stamp</th><th /></tr></thead>
-            <tbody>
-              {stages.map((stage, i) => {
-                const sig = data.signatures.find((s) => s.stage === stage);
-                const allowed = level !== null && level >= i && !sig;
-                return (
-                  <tr key={stage}>
-                    <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>{stage}</td>
-                    <td>{sig?.by ?? <span className="muted">—</span>}</td>
-                    <td>{sig ? sig.at.replace('T', ' ').slice(0, 16) : '—'}</td>
-                    <td className="muted" style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>{sig?.recalcStamp ?? '—'}</td>
-                    <td>
-                      {sig ? <Tag kind="accent">Signed</Tag>
-                        : <button className="btn btn-primary btn-sm" disabled={!allowed}
-                            title={allowed ? undefined : `Signing at the ${stage.toLowerCase()} stage needs a role at or above it.`}
-                            onClick={() => sign(stage)}>Sign</button>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <SheetTable
+          rows={stages.map((stage, i) => {
+            const sig = data.signatures.find((s) => s.stage === stage);
+            return { stage, sig, allowed: level !== null && level >= i && !sig };
+          })}
+          rowKey={(row) => row.stage}
+          noun="stages"
+          columns={[
+            { key: 'stage', header: 'Stage', value: (row) => row.stage, tdStyle: { fontFamily: 'var(--font-heading)', fontWeight: 800 }, cell: (row) => row.stage },
+            { key: 'by', header: 'Signed by', value: (row) => row.sig?.by, cell: (row) => row.sig?.by ?? <span className="muted">—</span> },
+            { key: 'when', header: 'When', kind: 'date', value: (row) => row.sig?.at, cell: (row) => row.sig ? row.sig.at.replace('T', ' ').slice(0, 16) : '—' },
+            { key: 'stamp', header: 'Stamp', value: (row) => row.sig?.recalcStamp, tdClassName: 'muted', tdStyle: { fontFamily: 'ui-monospace, monospace', fontSize: 11 }, cell: (row) => row.sig?.recalcStamp ?? '—' },
+            { key: 'act', header: '', cell: (row) => row.sig ? <Tag kind="accent">Signed</Tag>
+              : <button className="btn btn-primary btn-sm" disabled={!row.allowed}
+                  title={row.allowed ? undefined : `Signing at the ${row.stage.toLowerCase()} stage needs a role at or above it.`}
+                  onClick={() => sign(row.stage)}>Sign</button> },
+          ]}
+        />
       </Block>
 
       <Block kicker="Year-end lock" title="Eight gates, in order"
         note="Every gate reads live state and computes its own result. A gate below an unpassed gate reads 'not reached' — the sequence cannot be skipped, and the lock itself is partner-only.">
-        <div className="scroll-x">
-          <table className="table">
-            <thead><tr><th style={{ width: 30 }} /><th>Gate</th><th>Kind</th><th>Result</th><th>What it found</th></tr></thead>
-            <tbody>
-              {gates.map((g, i) => (
-                <tr key={g.id}>
-                  <td className="num muted">{i + 1}</td>
-                  <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>{g.label}</td>
-                  <td><Tag kind="neutral">{g.kind}</Tag></td>
-                  <td>
-                    {g.state === 'pass' ? <Tag kind="accent">Pass</Tag>
-                      : g.state === 'fail' ? <Tag kind="bad">Fail</Tag>
-                        : <Tag kind="neutral">Not reached</Tag>}
-                  </td>
-                  <td style={{ whiteSpace: 'normal' }} className="muted">{g.detail}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <SheetTable
+          rows={gates.map((g, i) => ({ ...g, n: i + 1 }))}
+          rowKey={(g) => g.id}
+          noun="gates"
+          columns={[
+            { key: 'n', header: '', kind: 'number', thClassName: 'num', tdClassName: 'num muted', width: 30, value: (g) => g.n, cell: (g) => g.n },
+            { key: 'gate', header: 'Gate', value: (g) => g.label, tdStyle: { fontFamily: 'var(--font-heading)', fontWeight: 800 }, cell: (g) => g.label },
+            { key: 'kind', header: 'Kind', value: (g) => g.kind, cell: (g) => <Tag kind="neutral">{g.kind}</Tag> },
+            { key: 'result', header: 'Result', value: (g) => g.state === 'pass' ? 'Pass' : g.state === 'fail' ? 'Fail' : 'Not reached', cell: (g) => (
+              g.state === 'pass' ? <Tag kind="accent">Pass</Tag>
+                : g.state === 'fail' ? <Tag kind="bad">Fail</Tag>
+                  : <Tag kind="neutral">Not reached</Tag>
+            ) },
+            { key: 'found', header: 'What it found', value: (g) => g.detail, tdClassName: 'muted', tdStyle: { whiteSpace: 'normal' }, cell: (g) => g.detail },
+          ]}
+        />
 
         <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-primary btn-sm"

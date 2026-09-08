@@ -85,6 +85,12 @@ export function buildCalendar(
   return periods.reverse();
 }
 
+/** First day of the named fiscal year, from the unit calendar. */
+export function fiscalYearStart(periods: Period[], fiscalYear: number): string | undefined {
+  const first = periods.filter((p) => p.fiscalYear === fiscalYear).sort((a, b) => a.no - b.no)[0];
+  return first?.starts;
+}
+
 export interface TransitionCheck {
   allowed: boolean;
   /** Stated in the accounting, not in the UI — README, "Interactions". */

@@ -1,8 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
 import type { AuthorityMode, Domain } from '../core/authority';
 import type {
-  Account, AppState, CodingSegment, Extract, Framework, Freeze, JournalBatch, JournalLine,
-  Obligation, PostingRule, ReportingUnit, Sample, Settlement, Signature, Tenant, TenantSettings,
+  Account, AroAssetClass, AppState, CodingSegment, Extract, Freeze, JournalBatch, JournalLine,
+  Obligation, PostingRule, PostingScenario, ReportingUnit, Sample, Settlement, Signature, TcaAsset, Tenant, TenantSettings,
   Tickmark, User, UnitData,
 } from '../core/types';
 import type { AttestedGate } from '../core/gates';
@@ -13,8 +13,21 @@ import type { ObligationEvent } from '../engine/rollforward';
 import type { AuditEvent, ChangeEntry } from '../core/writePath';
 import { emptyAppState } from '../core/emptyState';
 import { DOMAINS } from '../core/authority';
+import { clerkUserIdsWithActiveSession } from './clerk';
+import { FRAMEWORKS } from '../seed';
+import { classFromColumns } from '../core/accountType';
+import { canonicalizeObligationClasses, normalizeAroAssetClasses } from '../core/assetClass';
+import { parseCostEstimateTemplates } from '../core/costEstimate';
+import { alignDefaultScenarioFromChart, ensureClassScenarioAccounts, ensureEnginePostingRules, ensurePostingScenarios } from '../core/posting';
+import { ensureOpeningSnapshot, parseOpeningSnapshot, tcaFieldsFromPayload } from '../core/tcaListing';
+import type { MeasurementLayer } from '../engine/framework';
+import { RecalcRegister, emptyRecalcRegister } from '../core/recalc';
 
-export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[]): Promise<AppState> {
+export async function hydrateAppState(
+  prisma: PrismaClient,
+  tenantIds: string[],
+  opts?: { currentClerkUserId?: string },
+): Promise<AppState> {
   const state = emptyAppState();
   if (!tenantIds.length) return state;
 
@@ -27,13 +40,17 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
       accounts: true,
       segments: true,
       postingRules: true,
+      postingScenarios: true,
+      aroAssetClasses: true,
       curves: { include: { points: { orderBy: { termYears: 'asc' } } } },
       units: {
         include: {
           assumptions: true,
           periods: { orderBy: [{ fiscalYear: 'asc' }, { no: 'asc' }] },
-          obligations: { include: { costLines: true, revisions: true, events: true, settlements: true } },
+          tcaAssets: true,
+          obligations: { include: { costLines: true, revisions: true, layers: true, events: true, settlements: true } },
           extracts: true,
+          recalcRegister: { include: { rows: { orderBy: { ord: 'asc' } } } },
           batches: { include: { lines: { orderBy: { ord: 'asc' } } } },
           freezes: { include: { samples: true, tickmarks: true } },
           attestedGates: true,
@@ -56,7 +73,13 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
       custom: t.custom,
     };
     state.tenants.push(tenant);
+  }
 
+  const clerkIds = tenants.flatMap((t) => t.members.map((m) => m.user.clerkUserId).filter((id): id is string => Boolean(id)));
+  const activeSessions = await clerkUserIdsWithActiveSession(clerkIds);
+  if (opts?.currentClerkUserId) activeSessions.add(opts.currentClerkUserId);
+
+  for (const t of tenants) {
     for (const m of t.members) {
       const user: User = {
         id: m.user.id,
@@ -67,17 +90,35 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
         mfa: m.mfa as User['mfa'],
         isOwner: m.isOwner,
         lastSeen: m.lastSeen?.toISOString(),
+        pendingInvite: !m.user.clerkUserId && !m.lastSeen,
+        sessionActive: Boolean(m.user.clerkUserId && activeSessions.has(m.user.clerkUserId)),
       };
       state.users.push(user);
     }
 
+    const postingScenarios = t.postingScenarios.map(mapScenario);
+    const aroAssetClasses = t.aroAssetClasses.map(mapAssetClass);
+    const rawDefaults = (t.settings?.defaults ?? {}) as Record<string, unknown>;
+    const nestedTemplates = rawDefaults.costEstimateTemplates;
+    const { costEstimateTemplates: _nested, ...defaultFields } = rawDefaults;
+    const defaultsBase = defaultFields as TenantSettings['defaults'];
+    const columnTemplates = t.settings
+      ? parseCostEstimateTemplates((t.settings as { costEstimateTemplates?: unknown }).costEstimateTemplates)
+      : [];
     const settings: TenantSettings = t.settings
       ? {
           accounts: t.accounts.map(mapAccount),
           segments: t.segments.map(mapSegment),
           postingRules: t.postingRules.map(mapRule),
-          frameworks: t.settings.frameworks as unknown as Framework[],
-          defaults: t.settings.defaults as TenantSettings['defaults'],
+          postingScenarios,
+          aroAssetClasses,
+          costEstimateTemplates: columnTemplates.length ? columnTemplates : parseCostEstimateTemplates(nestedTemplates),
+          frameworks: FRAMEWORKS.map((f) => ({ ...f })),
+          defaults: {
+            ...defaultsBase,
+            frameworkId: defaultsBase.frameworkId || 'ifrs',
+          },
+          setup: (t.settings.setup as TenantSettings['setup']) ?? null,
           retentionYears: t.settings.retentionYears,
           legalHold: t.settings.legalHold,
           sso: t.settings.sso,
@@ -87,19 +128,29 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
           accounts: t.accounts.map(mapAccount),
           segments: t.segments.map(mapSegment),
           postingRules: t.postingRules.map(mapRule),
-          frameworks: [],
+          postingScenarios,
+          aroAssetClasses,
+          costEstimateTemplates: [],
+          frameworks: FRAMEWORKS.map((f) => ({ ...f })),
           defaults: {
             inflation: 0.025,
             contingency: 0.1,
             dayCount: '30/360 US (DAYS360)',
             termConvention: 'Round up to whole year (SAP)',
             calendarType: 'Monthly (12)',
+            frameworkId: 'ifrs',
           },
+          setup: null,
           retentionYears: 7,
           legalHold: false,
           sso: false,
           scim: false,
         };
+    ensureEnginePostingRules(settings, t.id);
+    ensurePostingScenarios(settings, t.id);
+    normalizeAroAssetClasses(settings);
+    alignDefaultScenarioFromChart(settings, t.id);
+    ensureClassScenarioAccounts(settings, t.id);
     state.settings[t.id] = settings;
 
     const auth = {} as Record<Domain, AuthorityMode>;
@@ -119,6 +170,7 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
       extrapolation: c.extrapolation as Curve['extrapolation'],
       asAt: c.asAt,
       isDraft: c.isDraft,
+      locked: c.locked,
       points: c.points.map((p) => ({ term: p.termYears, rate: p.rate })),
     }));
 
@@ -139,6 +191,7 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
         latePolicy: u.latePolicy as ReportingUnit['latePolicy'],
         status: u.status,
         stage: u.stage,
+        setupCompletedAt: u.setupCompletedAt ? u.setupCompletedAt.toISOString() : null,
         inflation: a?.inflation ?? 0.025,
         contingency: a?.contingency ?? 0.1,
         curveId: a?.curveId ?? '',
@@ -150,6 +203,8 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
         materialityPct: a?.materialityPct ?? 0,
         extrapolationPolicy: a?.extrapolationPolicy ?? 'flat-last',
         dayCount: u.dayCount,
+        layerPolicy: (a?.layerPolicy as ReportingUnit['layerPolicy']) ?? 'LIFO',
+        discount: a?.discount !== false,
       };
     });
     state.units[t.id] = units;
@@ -157,6 +212,8 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
     for (const u of t.units) {
       const freezeTickmarks = u.freezes.flatMap((f) => f.tickmarks);
       const data: UnitData = {
+        recalc: mapRecalcRegister(u.recalcRegister, u.fyEnd),
+        tcaAssets: u.tcaAssets.map(mapTcaAsset),
         obligations: u.obligations.map(mapObligation),
         events: u.obligations.flatMap((o) => o.events.map(mapEvent)),
         extracts: u.extracts.map(mapExtract),
@@ -169,11 +226,20 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
         periods: u.periods.map(mapPeriod),
         attestedGates: u.attestedGates.map(mapGate),
         glTotal: u.glTotal,
+        openingGlProvision: u.openingGlProvision ?? null,
+        openingGlArc: u.openingGlArc ?? null,
+        openingGlAroCost: u.openingGlAroCost ?? null,
+        openingGlAroAccum: u.openingGlAroAccum ?? null,
+        openingGlTcaCost: u.openingGlTcaCost ?? null,
+        openingGlTcaAccum: u.openingGlTcaAccum ?? null,
+        openingSnapshot: parseOpeningSnapshot(u.openingSnapshot),
         conversionAgreed: u.conversionAgreed,
         noteGenerated: u.noteGenerated,
         yearLocked: u.yearLocked,
       };
       state.data[u.id] = data;
+      canonicalizeObligationClasses(settings, data);
+      ensureOpeningSnapshot(data);
     }
 
     for (const c of t.changeLog) {
@@ -210,10 +276,24 @@ export async function hydrateAppState(prisma: PrismaClient, tenantIds: string[])
   return state;
 }
 
-function mapAccount(a: { id: string; tenantId: string; code: string; name: string; className: string; engineRole: string; requiredSegments: unknown }): Account {
+function mapColumns(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!k) continue;
+    if (typeof v === 'string') out[k] = v;
+    else if (v != null && typeof v !== 'object') out[k] = String(v);
+  }
+  return out;
+}
+
+function mapAccount(a: { id: string; tenantId: string; code: string; name: string; className: string; engineRole: string; requiredSegments: unknown; columns?: unknown }): Account {
+  const columns = mapColumns(a.columns);
   return {
-    id: a.id, tenantId: a.tenantId, code: a.code, name: a.name, cls: a.className,
+    id: a.id, tenantId: a.tenantId, code: a.code, name: a.name,
+    cls: classFromColumns(columns) || a.className,
     engineRole: a.engineRole, requiredSegments: a.requiredSegments as string[],
+    columns,
   };
 }
 
@@ -225,10 +305,50 @@ function mapRule(r: { id: string; tenantId: string; eventType: string; debitRole
   return { id: r.id, tenantId: r.tenantId, eventType: r.eventType, debitRole: r.debitRole, creditRole: r.creditRole, engineEmitted: r.engineEmitted };
 }
 
+function mapScenario(s: { id: string; tenantId: string; name: string; isDefault: boolean; roleAccounts: unknown; completedRoles?: unknown }): PostingScenario {
+  const raw = (s.roleAccounts && typeof s.roleAccounts === 'object') ? s.roleAccounts as Record<string, unknown> : {};
+  const accounts: Record<string, string> = {};
+  for (const [role, id] of Object.entries(raw)) {
+    if (typeof id === 'string' && id) accounts[role] = id;
+  }
+  const completedRoles = Array.isArray(s.completedRoles)
+    ? s.completedRoles.filter((r): r is string => typeof r === 'string' && r.length > 0)
+    : [];
+  return { id: s.id, tenantId: s.tenantId, name: s.name, isDefault: s.isDefault, accounts, completedRoles };
+}
+
+function mapAssetClass(c: { id: string; tenantId: string; name: string; scenarioId: string; code?: string }): AroAssetClass {
+  return { id: c.id, tenantId: c.tenantId, code: c.code ?? '', name: c.name, scenarioId: c.scenarioId };
+}
+
+function mapTcaAsset(a: {
+  id: string; assetNumber: string; description: string; assetClass: string;
+  acquisitionDate: string; site: string; scope: string; scopeReason: string; payload: unknown;
+}): TcaAsset {
+  const fromPayload = tcaFieldsFromPayload(mapColumns(a.payload));
+  return {
+    id: a.id,
+    assetNumber: a.assetNumber,
+    description: a.description,
+    assetClass: a.assetClass,
+    acquisitionDate: a.acquisitionDate,
+    site: a.site,
+    acquisitionCost: fromPayload.acquisitionCost,
+    accumAmort: fromPayload.accumAmort,
+    totalUl: fromPayload.totalUl,
+    expiredUl: fromPayload.expiredUl,
+    assetStatus: fromPayload.assetStatus,
+    scope: a.scope === 'In scope' || a.scope === 'Scoped out' ? a.scope : 'Undecided',
+    scopeReason: a.scopeReason,
+    columns: fromPayload.columns,
+  };
+}
+
 function mapObligation(o: {
   id: string; ref: string; description: string; costEstimateDate: string; settlementDate: string; payload: unknown;
   costLines: { id: string; description: string; qty: number; unitRate: number; source: string | null }[];
   revisions: { id: string; kind: string; amount: number | null; newDate: string | null; effectiveDate: string; reason: string; evidenceRef: string | null; createdBy: string | null; createdAt: Date }[];
+  layers: { id: string; aroseOn: string; amount: number; rate: number; lifeYears: number; method: string }[];
 }): Obligation {
   const extra = (o.payload && typeof o.payload === 'object') ? o.payload as Record<string, unknown> : {};
   const lines: CostLine[] = o.costLines.map((l) => ({
@@ -245,6 +365,9 @@ function mapObligation(o: {
     createdBy: r.createdBy ?? undefined,
     createdAt: r.createdAt.toISOString(),
   }));
+  const layers: MeasurementLayer[] = o.layers.map((l) => ({
+    id: l.id, aroseOn: l.aroseOn, direct: l.amount, rate: l.rate, lifeYears: l.lifeYears, method: l.method,
+  }));
   return {
     ...extra,
     id: o.id,
@@ -254,6 +377,7 @@ function mapObligation(o: {
     settlementDate: o.settlementDate,
     lines,
     adj,
+    layers: layers.length ? layers : undefined,
   };
 }
 
@@ -296,8 +420,15 @@ function mapBatch(b: {
   };
 }
 
-function mapSettlement(s: { id: string; obligationId: string; kind: string; pct: number; actualCost: number; settledOn: string; posted: boolean }): Settlement {
-  return { id: s.id, obligationId: s.obligationId, kind: s.kind as Settlement['kind'], pct: s.pct, actualCost: s.actualCost, settledOn: s.settledOn, posted: s.posted };
+function mapSettlement(s: {
+  id: string; obligationId: string; kind: string; pct: number; actualCost: number; settledOn: string;
+  posted: boolean; disposeAroAsset?: boolean; relatedAssetSold?: boolean;
+}): Settlement {
+  return {
+    id: s.id, obligationId: s.obligationId, kind: s.kind as Settlement['kind'], pct: s.pct,
+    actualCost: s.actualCost, settledOn: s.settledOn, posted: s.posted,
+    disposeAroAsset: s.disposeAroAsset ?? false, relatedAssetSold: s.relatedAssetSold ?? false,
+  };
 }
 
 function mapFreeze(f: { id: string; reportingUnitId: string; version: number; hash: string; population: number; total: number; createdAt: Date; createdBy: string; rows: unknown }): Freeze {
@@ -339,3 +470,44 @@ function mapGate(g: { id: string; label: string; attestedBy: string | null; atte
 }
 
 export type { ChangeEntry };
+
+/**
+ * Mode 1's register. A unit that has never opened the recalculation tool has no
+ * row in the table, which is not an error — it hydrates as an empty register on
+ * that unit's own year end.
+ */
+function mapRecalcRegister(
+  reg: {
+    fyEnd: string; inflation: number; materialityUsd: number; materialityPct: number;
+    curve: unknown; curveSource: string; rep04: unknown; rep06: unknown;
+    trialBalancePv: number | null; seeded: boolean; signedOffBy: string | null; signedOffAt: string | null;
+    rows: {
+      obligationNo: string; cost: number; costEstimateDate: string; settlementDate: string;
+      rateOverride: number | null; sourceFv: number | null; sourcePv: number | null;
+    }[];
+  } | null | undefined,
+  fyEnd: string,
+): RecalcRegister {
+  if (!reg) return emptyRecalcRegister(fyEnd);
+  return {
+    fyEnd: reg.fyEnd,
+    inflation: reg.inflation,
+    materiality: { usd: reg.materialityUsd, pct: reg.materialityPct },
+    rows: reg.rows.map((r) => ({
+      id: r.obligationNo,
+      cost: r.cost,
+      costEstimateDate: r.costEstimateDate,
+      settlementDate: r.settlementDate,
+      rateOverride: r.rateOverride,
+      sourceFv: r.sourceFv,
+      sourcePv: r.sourcePv,
+    })),
+    curve: (reg.curve as RecalcRegister['curve']) ?? null,
+    curveSource: reg.curveSource,
+    rep04: (reg.rep04 as RecalcRegister['rep04']) ?? null,
+    rep06: (reg.rep06 as RecalcRegister['rep06']) ?? null,
+    trialBalancePv: reg.trialBalancePv,
+    seeded: reg.seeded,
+    signedOff: reg.signedOffBy ? { by: reg.signedOffBy, at: reg.signedOffAt ?? '' } : null,
+  };
+}

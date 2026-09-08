@@ -7,9 +7,10 @@
  */
 
 import { useMemo } from 'react';
-import { Curve, TermConvention } from '../engine/curve';
+import type { Curve } from '../engine/curve';
 import { Assumptions, Derived, derive, Obligation } from '../engine/derive';
 import { rollForward, annualRollForward, RollForward } from '../engine/rollforward';
+import { unitAssumptions, unitCurve, unitDeriveOptions, unitPriorCurve } from './measure';
 import { useStore, useUnit, useUnitData } from './store';
 
 export interface DerivedUnit {
@@ -37,32 +38,17 @@ export function useDerived(): DerivedUnit | null {
   return useMemo(() => {
     if (!unit || !data) return null;
 
-    const curves = state.curves[unit.tenantId] ?? [];
-    const curve = curves.find((c) => c.id === unit.curveId) ?? null;
-    const priorCurve = curves.find((c) => c.id === unit.priorCurveId) ?? null;
-
-    const assumptions: Assumptions = {
-      inflation: unit.inflation,
-      contingency: unit.contingency,
-      termConvention: unit.termConvention as TermConvention,
-      fyEnd: unit.fyEnd,
-      priorInflation: unit.priorInflation,
-      materialityUsd: unit.materialityUsd,
-      materialityPct: unit.materialityPct,
-    };
-
-    const blank: Curve = {
-      id: '', name: 'No curve assigned', currency: unit.currency,
-      source: '', basis: '', interpolation: 'step', extrapolation: 'flat-last',
-      asAt: unit.fyEnd, points: [],
-    };
+    const curve = unitCurve(state, unit) ?? null;
+    const priorCurve = unitPriorCurve(state, unit) ?? null;
+    const assumptions = unitAssumptions(unit);
+    const deriveOpts = unitDeriveOptions(state, unit);
 
     const invalid: DerivedUnit['invalid'] = [];
     const byId = new Map<string, Derived>();
     const rows: Derived[] = [];
 
     for (const o of data.obligations) {
-      const d = derive(o, assumptions, { curve: curve ?? blank, priorCurve: priorCurve ?? undefined });
+      const d = derive(o, assumptions, deriveOpts);
       byId.set(o.id, d);
 
       // INVARIANTS §5 — a row failing validation stays in the register and is
@@ -71,7 +57,7 @@ export function useDerived(): DerivedUnit | null {
         invalid.push({ obligation: o, reason: 'The provision could not be measured from the inputs given.' });
       } else if (!/^\d{4}-\d{2}-\d{2}$/.test(String(o.settlementDate))) {
         invalid.push({ obligation: o, reason: 'The expected settlement date is not a date.' });
-      } else if (!curve) {
+      } else if (!curve && d.discounted) {
         invalid.push({ obligation: o, reason: 'No discount curve is assigned to this reporting unit, so the rate could not be looked up.' });
       }
 
@@ -90,5 +76,5 @@ export function useDerived(): DerivedUnit | null {
       assumptions, curve, priorCurve, rows, byId, total, material,
       periods, annual: annualRollForward(periods), invalid,
     };
-  }, [state.curves, unit, data]);
+  }, [state, unit, data]);
 }

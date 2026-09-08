@@ -18,8 +18,29 @@ export type EventType =
   | 'addition'
   | 'accretion'
   | 'revision'
+  | 'revision-unproductive'
   | 'settlement'
-  | 'fx';
+  | 'fx'
+  /** Asset-side amortization. Not a provision movement — ignored by the identity. */
+  | 'depreciation'
+  /** New obligation charged to expense (no ARO asset). Counts as an addition on the identity. */
+  | 'expense-recognition'
+  /** Provision extinguished because the related TCA was sold. Counts as a settlement on the identity. */
+  | 'disposal'
+  /** Take the retirement-cost asset off the books against accumulated amortization. Not a provision movement. */
+  | 'asset-retirement'
+  /** Slice of a downward revision that cannot hit the asset without taking NBV below zero. Credits accretion; reduces the provision. */
+  | 'downward-excess';
+
+/** Provision movements that enter the roll-forward identity. */
+export const PROVISION_EVENT_TYPES: EventType[] = [
+  'opening', 'addition', 'expense-recognition', 'accretion', 'revision', 'revision-unproductive', 'downward-excess', 'settlement', 'disposal', 'fx',
+];
+
+/** Every event type the ledger can hold. Asset-side types are omitted from the provision identity. */
+export const LEDGER_EVENT_TYPES: EventType[] = [
+  ...PROVISION_EVENT_TYPES, 'depreciation', 'asset-retirement',
+];
 
 export interface ObligationEvent {
   id: string;
@@ -64,10 +85,10 @@ export function rollForward(
     inPeriod.filter((e) => e.type === t).reduce((s, e) => s + e.amount, 0);
 
   const opening = bucket('opening');
-  const additions = bucket('addition');
+  const additions = bucket('addition') + bucket('expense-recognition');
   const accretion = bucket('accretion');
-  const revisions = bucket('revision');
-  const settlements = bucket('settlement');
+  const revisions = bucket('revision') + bucket('revision-unproductive') + bucket('downward-excess');
+  const settlements = bucket('settlement') + bucket('disposal');
   const fx = bucket('fx');
   const closing = opening + additions + accretion + revisions + settlements + fx;
   const residual = measuredClosing === null ? 0 : measuredClosing - closing;

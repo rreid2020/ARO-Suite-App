@@ -5,13 +5,24 @@
  * look wrong (the leap-year shift, the SAP term rounding). They are deliberate."
  */
 
-import { isLeapYear, nextDay, term360, yearOf, cmpDate } from './dates';
+import { isLeapYear, isThirty360, nextDay, termYears, yearOf, cmpDate, DayCount, DEFAULT_DAY_COUNT } from './dates';
 import {
   Curve,
   TermConvention,
   curveTermOf,
   curveRateDetail,
 } from './curve';
+import {
+  FrameworkPolicy,
+  LayerPolicy,
+  MeasurementLayer,
+  frameworkPolicy,
+  layerRateLookup,
+  syncLayers,
+  unitDiscounts,
+  unitEscalates,
+  weightedLayerRate,
+} from './framework';
 
 /** ENGINE-SPEC §2 — the cost build-up. Direct cost = Σ qty × rate. */
 export interface CostLine {
@@ -49,6 +60,8 @@ export interface Obligation {
   settlementDate: string;
   lines: CostLine[];
   adj: Revision[];
+  /** Stored when the framework locks a rate per layer. Absent under IFRS/PSAS. */
+  layers?: MeasurementLayer[];
   /** Anything else the register carries. Not read by the engine. */
   [k: string]: unknown;
 }
@@ -60,6 +73,8 @@ export interface Assumptions {
   /** Contingency as a decimal of direct cost. Applied once, before escalation. */
   contingency: number;
   termConvention: TermConvention;
+  /** Day count used to measure terms. Default 30/360 US. */
+  dayCount?: DayCount;
   /** The reporting unit's financial year end, ISO. */
   fyEnd: string;
   /** Written by the year-end revaluation — ENGINE-SPEC §7. */
@@ -83,6 +98,13 @@ export interface PriceInputs {
   inflation: number;
   curve: Curve;
   termConvention: TermConvention;
+  dayCount?: DayCount;
+  /** Locked layer rate — skips the curve lookup for the PV step. */
+  rate?: number;
+  /** PSAS may dispense with discounting. Default true. */
+  discount?: boolean;
+  /** PSAS undiscounted: inflation drops out with the discount. Default true. */
+  escalate?: boolean;
 }
 
 export interface Priced {
@@ -101,7 +123,7 @@ export interface Priced {
   tD: number;
   /** Cost escalated to the FY end. */
   cce: number;
-  /** Fair value at settlement. */
+  /** Future value at settlement. */
   fv: number;
   /** The term the curve was read at, after the term convention. */
   curveTerm: number;
@@ -126,22 +148,25 @@ export function price(i: PriceInputs): Priced {
   // that the two legs sum to the implied term under 30/360. It matches a manual
   // adjustment in the client's Master Sheet. Discounting still runs from the
   // year end, so tD is unaffected. Do not "fix" it.
+  const dayCount = i.dayCount ?? DEFAULT_DAY_COUNT;
   const y = yearOf(i.costEstimateDate);
-  const leap = y !== null && isLeapYear(y);
+  const leap = isThirty360(dayCount) && y !== null && isLeapYear(y);
   const mcd = leap ? nextDay(i.fyEnd) : i.fyEnd;
 
-  const t1 = term360(i.costEstimateDate, i.fyEnd);
-  const t2 = term360(mcd, i.settlementDate);
-  const tD = term360(i.fyEnd, i.settlementDate);
+  const t1 = termYears(i.costEstimateDate, i.fyEnd, dayCount);
+  const t2 = termYears(mcd, i.settlementDate, dayCount);
+  const tD = termYears(i.fyEnd, i.settlementDate, dayCount);
 
-  const cce = cost * Math.pow(1 + i.inflation, t1);
-  const fv = cce * Math.pow(1 + i.inflation, t2);
+  const escalate = i.escalate !== false;
+  const cce = escalate ? cost * Math.pow(1 + i.inflation, t1) : cost;
+  const fv = escalate ? cce * Math.pow(1 + i.inflation, t2) : cce;
 
   const lookup = curveTermOf(i.curve, tD, i.termConvention);
   const rateDetail = curveRateDetail(i.curve, lookup.term);
-  const rate = rateDetail.rate;
+  const rate = i.rate ?? rateDetail.rate;
+  const discount = i.discount !== false;
 
-  const pv = tD > 0 ? fv / Math.pow(1 + rate, tD) : fv;
+  const pv = discount && tD > 0 ? fv / Math.pow(1 + rate, tD) : fv;
 
   return {
     direct: i.direct,
@@ -155,8 +180,8 @@ export function price(i: PriceInputs): Priced {
     fv,
     curveTerm: lookup.term,
     beyond: lookup.beyond || rateDetail.beyond,
-    rateBasis: rateDetail.basis,
-    rate,
+    rateBasis: i.discount === false ? 'not discounted' : i.rate != null ? 'locked layer rate' : rateDetail.basis,
+    rate: i.discount === false ? 0 : rate,
     pv,
   };
 }
@@ -174,12 +199,19 @@ export function costRevisions(adj: Revision[]): number {
 /**
  * The settlement date in force: the obligation's own date unless a timing
  * revision has moved it, in which case the latest one wins.
+ *
+ * Pass `before` to read the date as it stood at the start of a fiscal year —
+ * only revisions dated earlier than that day are applied.
  */
-export function settlementInForce(o: Obligation): string {
+export function settlementAsAt(o: Obligation, before?: string): string {
   const terms = (o.adj ?? [])
-    .filter((a) => a.kind === 'term' && a.to)
+    .filter((a) => a.kind === 'term' && a.to && (!before || cmpDate(a.date, before) < 0))
     .sort((a, b) => cmpDate(a.date, b.date));
   return terms.length ? (terms[terms.length - 1].to as string) : o.settlementDate;
+}
+
+export function settlementInForce(o: Obligation): string {
+  return settlementAsAt(o);
 }
 
 export interface DeriveOptions {
@@ -187,6 +219,12 @@ export interface DeriveOptions {
   curve: Curve;
   /** The curve in force before the year-end revaluation — ENGINE-SPEC §7. */
   priorCurve?: Curve;
+  /** Defaults to IFRS when omitted — existing callers keep the single-rate chain. */
+  framework?: string | FrameworkPolicy;
+  /** PSAS only. Ignored when the framework requires discounting. Default true. */
+  discount?: boolean;
+  /** US GAAP / ASPE downward revisions. Default LIFO. */
+  layerPolicy?: LayerPolicy;
 }
 
 export interface Bridge {
@@ -211,6 +249,10 @@ export interface Derived extends Priced {
   timingRevised: boolean;
   costRevisions: number;
   bridge: Bridge;
+  layers: MeasurementLayer[];
+  discounted: boolean;
+  ratePerLayer: boolean;
+  frameworkId: string;
 }
 
 /**
@@ -219,8 +261,19 @@ export interface Derived extends Priced {
  * Before a year-end revaluation has run, prior equals current, so the rate and
  * inflation legs read nil *because nothing moved* — not because they are
  * unimplemented.
+ *
+ * US GAAP / ASPE price each stored layer at its locked rate. A later closing
+ * curve does not remeasure those layers — it only prices a newly created one.
+ * PSAS may skip discounting (and then inflation) entirely.
  */
 export function derive(o: Obligation, a: Assumptions, opt: DeriveOptions): Derived {
+  const policy = typeof opt.framework === 'object' && opt.framework
+    ? opt.framework
+    : frameworkPolicy(typeof opt.framework === 'string' ? opt.framework : undefined);
+  const discounted = unitDiscounts(policy, opt.discount);
+  const escalate = unitEscalates(policy, discounted);
+  const layerPolicy = opt.layerPolicy ?? policy.defaultLayerPolicy;
+
   const baseDirect = directFromLines(o.lines);
   const revisions = costRevisions(o.adj);
   const revisedDirect = baseDirect + revisions;
@@ -238,28 +291,99 @@ export function derive(o: Obligation, a: Assumptions, opt: DeriveOptions): Deriv
     costEstimateDate: o.costEstimateDate,
     fyEnd: a.fyEnd,
     termConvention: a.termConvention,
+    dayCount: a.dayCount ?? DEFAULT_DAY_COUNT,
+    discount: discounted,
+    escalate,
   };
 
-  // ENGINE-SPEC §6 — the same obligation priced four times, each move changing
-  // exactly one thing, so the four effects sum to the movement with no residual.
-  const pvBase = price({ ...common, direct: baseDirect, settlementDate: stOriginal, inflation: priorInfl, curve: priorCurve });
-  const pvCostOnly = price({ ...common, direct: revisedDirect, settlementDate: stOriginal, inflation: priorInfl, curve: priorCurve });
-  const pvTimingOnly = price({ ...common, direct: revisedDirect, settlementDate: stRevised, inflation: priorInfl, curve: priorCurve });
-  const pvRateOnly = price({ ...common, direct: revisedDirect, settlementDate: stRevised, inflation: priorInfl, curve: closingCurve });
-  const final = price({ ...common, direct: revisedDirect, settlementDate: stRevised, inflation: closingInfl, curve: closingCurve });
+  if (!policy.ratePerLayer) {
+    const pvBase = price({ ...common, direct: baseDirect, settlementDate: stOriginal, inflation: priorInfl, curve: priorCurve });
+    const pvCostOnly = price({ ...common, direct: revisedDirect, settlementDate: stOriginal, inflation: priorInfl, curve: priorCurve });
+    const pvTimingOnly = price({ ...common, direct: revisedDirect, settlementDate: stRevised, inflation: priorInfl, curve: priorCurve });
+    const pvRateOnly = price({ ...common, direct: revisedDirect, settlementDate: stRevised, inflation: priorInfl, curve: closingCurve });
+    const final = price({ ...common, direct: revisedDirect, settlementDate: stRevised, inflation: closingInfl, curve: closingCurve });
 
-  const bridge: Bridge = {
-    pvBase: pvBase.pv,
-    pvCostOnly: pvCostOnly.pv,
-    pvTimingOnly: pvTimingOnly.pv,
-    pvRateOnly: pvRateOnly.pv,
-    costEffect: pvCostOnly.pv - pvBase.pv,
-    timingEffect: pvTimingOnly.pv - pvCostOnly.pv,
-    rateEffect: pvRateOnly.pv - pvTimingOnly.pv,
-    inflEffect: final.pv - pvRateOnly.pv,
-    movement: final.pv - pvBase.pv,
-  };
+    const layers: MeasurementLayer[] = baseDirect > 0 || revisions !== 0 ? [{
+      id: `${o.id}-layer-initial`,
+      aroseOn: o.costEstimateDate,
+      direct: revisedDirect,
+      rate: final.rate,
+      lifeYears: final.curveTerm,
+      method: discounted ? 'current-rate' : 'undiscounted',
+    }] : [];
 
+    return packDerived(o, final, stRevised, stOriginal, revisions, {
+      pvBase: pvBase.pv,
+      pvCostOnly: pvCostOnly.pv,
+      pvTimingOnly: pvTimingOnly.pv,
+      pvRateOnly: pvRateOnly.pv,
+      costEffect: pvCostOnly.pv - pvBase.pv,
+      timingEffect: pvTimingOnly.pv - pvCostOnly.pv,
+      rateEffect: pvRateOnly.pv - pvTimingOnly.pv,
+      inflEffect: final.pv - pvRateOnly.pv,
+      movement: final.pv - pvBase.pv,
+    }, layers, discounted, false, policy.id);
+  }
+
+  const stForLookup = stRevised;
+  const closingLookup = layerRateLookup(closingCurve, stForLookup, a.termConvention, a.dayCount);
+  const priorLookup = layerRateLookup(priorCurve, stForLookup, a.termConvention, a.dayCount);
+  const layers = syncLayers(o, o.layers, closingLookup, layerPolicy);
+  const baseLayers = syncLayers(
+    { ...o, adj: (o.adj ?? []).filter((x) => x.kind !== 'cost') },
+    o.layers,
+    priorLookup,
+    layerPolicy,
+  );
+
+  const priceSet = (set: MeasurementLayer[], settlementDate: string, inflation: number, curve: Curve) =>
+    set.reduce((s, l) => s + price({
+      ...common, direct: l.direct, settlementDate, inflation, curve, rate: l.rate,
+    }).pv, 0);
+
+  const pvBase = priceSet(baseLayers, stOriginal, priorInfl, priorCurve);
+  const pvCostOnly = priceSet(layers, stOriginal, priorInfl, priorCurve);
+  const pvTimingOnly = priceSet(layers, stRevised, priorInfl, priorCurve);
+  // Locked rates: a later closing table does not remeasure existing layers.
+  const pvRateOnly = pvTimingOnly;
+  const pvFinal = priceSet(layers, stRevised, closingInfl, closingCurve);
+
+  const layerPv = layers.map((l) => ({
+    ...l,
+    pv: price({
+      ...common, direct: l.direct, settlementDate: stRevised, inflation: closingInfl, curve: closingCurve, rate: l.rate,
+    }).pv,
+  }));
+  const cash = price({
+    ...common, direct: revisedDirect, settlementDate: stRevised, inflation: closingInfl, curve: closingCurve,
+    rate: weightedLayerRate(layerPv),
+  });
+
+  return packDerived(o, { ...cash, pv: pvFinal, rateBasis: 'locked layer rate' }, stRevised, stOriginal, revisions, {
+    pvBase,
+    pvCostOnly,
+    pvTimingOnly,
+    pvRateOnly,
+    costEffect: pvCostOnly - pvBase,
+    timingEffect: pvTimingOnly - pvCostOnly,
+    rateEffect: 0,
+    inflEffect: pvFinal - pvRateOnly,
+    movement: pvFinal - pvBase,
+  }, layers, discounted, true, policy.id);
+}
+
+function packDerived(
+  o: Obligation,
+  final: Priced,
+  stRevised: string,
+  stOriginal: string,
+  revisions: number,
+  bridge: Bridge,
+  layers: MeasurementLayer[],
+  discounted: boolean,
+  ratePerLayer: boolean,
+  frameworkId: string,
+): Derived {
   return {
     ...final,
     obligationId: o.id,
@@ -268,6 +392,10 @@ export function derive(o: Obligation, a: Assumptions, opt: DeriveOptions): Deriv
     timingRevised: stRevised !== stOriginal,
     costRevisions: revisions,
     bridge,
+    layers,
+    discounted,
+    ratePerLayer,
+    frameworkId,
   };
 }
 

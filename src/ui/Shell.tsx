@@ -10,9 +10,11 @@
 import React from 'react';
 import { useClerk } from '@clerk/react';
 import { useStore, useTenant, useUnit, useUnitWord } from '../core/store';
-import { FIRM_NAV, PHASES, stepById, stepsFor } from '../core/nav';
+import { FIRM_NAV, PHASES, resolveFirmNavId, resolveUnitScreen, stepById, stepsFor, unitLandingScreen } from '../core/nav';
+import { landingScreen } from '../core/setup';
 import { ROLES } from '../core/authority';
 import { ReturnBanner } from './components';
+import { AroWordmark } from './Logo';
 import { Screen } from './screens';
 
 export function Shell() {
@@ -26,8 +28,10 @@ export function Shell() {
 
   const units = state.units[tenant.id] ?? [];
   const steps = stepsFor(tenant.kind);
-  const step = stepById(ui.screen);
-  const firmNav = FIRM_NAV.find((n) => n.id === ui.screen);
+  const screen = resolveUnitScreen(ui.screen);
+  const step = stepById(screen);
+  const firmScreen = resolveFirmNavId(ui.screen);
+  const firmNav = FIRM_NAV.find((n) => n.id === firmScreen);
 
   const title = step ? step.label : firmNav ? firmNav.label : 'ARO Suite';
   const purpose = step ? step.purpose : firmNav ? firmNav.purpose : '';
@@ -39,9 +43,8 @@ export function Shell() {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'stretch' }}>
       {/* ── sidebar ──────────────────────────────────────────────────── */}
       <nav style={{ width: 262, flex: 'none', background: 'var(--color-accent-900)', color: 'var(--color-bg)', display: 'flex', flexDirection: 'column', position: 'sticky', top: 0, height: '100vh', overflowY: 'auto' }}>
-        <div style={{ padding: '16px 18px', borderBottom: '1px solid color-mix(in srgb,var(--color-bg) 20%,transparent)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 18, height: 18, background: 'var(--color-bg)' }} />
-          <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 14, letterSpacing: '-0.01em' }}>ARO SUITE</div>
+        <div style={{ padding: '16px 18px', borderBottom: '1px solid color-mix(in srgb,var(--color-bg) 20%,transparent)' }}>
+          <AroWordmark inverse size={18} />
         </div>
 
         <div style={{ padding: '14px 18px', borderBottom: '1px solid color-mix(in srgb,var(--color-bg) 20%,transparent)', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -52,7 +55,7 @@ export function Shell() {
             onChange={(e) => {
               const t = state.tenants.find((x) => x.id === e.target.value)!;
               const owner = state.users.find((u) => u.tenantId === t.id && u.isOwner) ?? state.users.find((u) => u.tenantId === t.id);
-              setUi({ tenantId: t.id, unitId: null, screen: 'units', userName: owner?.name ?? ui.userName, role: owner?.role ?? ui.role });
+              setUi({ tenantId: t.id, unitId: null, screen: landingScreen(state, t.id), userName: owner?.name ?? ui.userName, role: owner?.role ?? ui.role });
             }}
             style={{ minHeight: 30, fontSize: 12, padding: '2px 6px', background: 'transparent', color: 'var(--color-bg)', borderColor: 'color-mix(in srgb,var(--color-bg) 40%,transparent)' }}
           >
@@ -66,8 +69,28 @@ export function Shell() {
             // A firm screen does not close the open reporting unit — the two
             // sidebar sections stay live so a trip to the change log does not
             // cost the user their place in the workflow.
-            <SideButton key={n.id} active={ui.screen === n.id} label={n.label} title={n.purpose}
+            <SideButton key={n.id} active={firmScreen === n.id} label={n.label} title={n.purpose}
               onClick={() => setUi({ screen: n.id, tab: '', sub: '' })} />
+          ))}
+          <div style={{ fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.55, padding: '10px 10px 6px' }}>
+            {unitWord}s
+          </div>
+          {units.length === 0 ? (
+            <div style={{ padding: '4px 10px 8px', fontSize: 11, opacity: 0.55, lineHeight: 1.35 }}>
+              None yet. Create one in Company setup.
+            </div>
+          ) : units.map((u) => (
+            <SideButton
+              key={u.id}
+              active={ui.unitId === u.id}
+              label={u.entity}
+              title={`Open ${u.entity} · FY end ${u.fyEnd} · ${u.currency}`}
+              onClick={() => {
+                const landing = unitLandingScreen(tenant.kind, state, u);
+                const stay = ui.unitId === u.id && Boolean(step);
+                setUi({ unitId: u.id, screen: stay ? ui.screen : landing, tab: stay ? ui.tab : '', sub: stay ? ui.sub : '' });
+              }}
+            />
           ))}
         </div>
 
@@ -94,7 +117,7 @@ export function Shell() {
                   {inPhase.map((s) => (
                     <SideButton
                       key={s.id}
-                      active={ui.screen === s.id}
+                      active={screen === s.id}
                       label={s.label}
                       title={s.purpose}
                       num={String(steps.indexOf(s) + 1).padStart(2, '0')}
@@ -176,7 +199,7 @@ function SideButton({
       {num
         ? <span style={{ width: 16, flex: 'none', fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 9.5, fontVariantNumeric: 'tabular-nums', opacity: 0.6 }}>{num}</span>
         : <span style={{ width: 5, height: 5, background: active ? 'var(--color-bg)' : 'color-mix(in srgb,var(--color-bg) 45%,transparent)', flex: 'none' }} />}
-      <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   );
 }

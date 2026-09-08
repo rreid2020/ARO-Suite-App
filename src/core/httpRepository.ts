@@ -70,6 +70,22 @@ export class HttpRepository implements Repository {
     return this.parse<AppState>(res);
   }
 
+  async inviteUser(tenantId: string, body: { name: string; email: string; role: string }): Promise<{ message: string; state: AppState }> {
+    const res = await fetch(`/api/tenants/${encodeURIComponent(tenantId)}/invites`, {
+      method: 'POST', headers: await this.headers(),
+      body: JSON.stringify(body),
+    });
+    return this.parse(res);
+  }
+
+  async removeUser(tenantId: string, userId: string): Promise<{ message: string; state: AppState }> {
+    const res = await fetch(
+      `/api/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`,
+      { method: 'DELETE', headers: await this.headers() },
+    );
+    return this.parse(res);
+  }
+
   async clear(): Promise<void> {
     /* Tenants are deleted individually. */
   }

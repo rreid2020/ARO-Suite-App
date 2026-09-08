@@ -39,6 +39,21 @@ describe('roll-forward identity — INVARIANTS §1, ENGINE-SPEC §9.7', () => {
     expect(rf.foots).toBe(true);
   });
 
+  it('expense-recognition and disposal move the identity as additions and settlements', () => {
+    const events = [
+      ev('P01', 'opening', 100),
+      ev('P01', 'expense-recognition', 40),
+      ev('P01', 'disposal', -30),
+      ev('P01', 'asset-retirement', 80),
+      ev('P01', 'depreciation', 10),
+    ];
+    const rf = rollForward(events, 'P01', 110);
+    expect(rf.additions).toBe(40);
+    expect(rf.settlements).toBe(-30);
+    expect(rf.closing).toBe(110);
+    expect(rf.foots).toBe(true);
+  });
+
   it('does not foot when the measured closing disagrees, and says by how much', () => {
     const rf = rollForward([ev('P01', 'opening', 1_000)], 'P01', 1_010);
     expect(rf.foots).toBe(false);
@@ -77,6 +92,17 @@ describe('roll-forward identity — INVARIANTS §1, ENGINE-SPEC §9.7', () => {
   it('an empty population rolls forward to nil rather than throwing', () => {
     const rf = rollForward([], 'P01', 0);
     expect(rf.closing).toBe(0);
+    expect(rf.foots).toBe(true);
+  });
+
+  it('depreciation is not a provision movement', () => {
+    const events = [
+      ev('P01', 'opening', 1_000),
+      ev('P01', 'accretion', 40),
+      ev('P01', 'depreciation', 25),
+    ];
+    const rf = rollForward(events, 'P01', 1_040);
+    expect(rf.closing).toBe(1_040);
     expect(rf.foots).toBe(true);
   });
 });

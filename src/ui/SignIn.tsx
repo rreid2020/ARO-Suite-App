@@ -6,11 +6,14 @@
  * first engagement partner because somebody has to be able to sign off.
  */
 
-import React, { useState } from 'react';
-import { SignIn as ClerkSignIn, useAuth, useUser } from '@clerk/react';
+import React, { useEffect, useState } from 'react';
+import { SignIn as ClerkSignIn, SignUp as ClerkSignUp, useAuth, useUser } from '@clerk/react';
 import { useStore } from '../core/store';
 import { TENANT_KINDS, TenantKind } from '../core/authority';
+import { landingScreen } from '../core/setup';
 import { Field } from './components';
+import { AroWordmark } from './Logo';
+import { aroClerkAppearance } from './clerkAppearance';
 
 const FACTS = [
   ['Day count', '30/360 US'],
@@ -19,10 +22,25 @@ const FACTS = [
   ['Deployment', 'SaaS / on-prem'],
 ];
 
+function useSignUpMode() {
+  const read = () => {
+    const q = new URLSearchParams(window.location.search);
+    return q.get('auth') === 'signup' || q.has('__clerk_ticket') || q.has('clerk_ticket');
+  };
+  const [signup, setSignup] = useState(read);
+  useEffect(() => {
+    const sync = () => setSignup(read());
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
+  return signup;
+}
+
 export function SignIn() {
   const { state, setUi, createTenant, loadSample, deleteTenant, ready } = useStore();
   const { user } = useUser();
   const { isSignedIn, isLoaded: clerkLoaded } = useAuth();
+  const signingUp = useSignUpMode();
   const [tName, setTName] = useState('');
   const [tKind, setTKind] = useState<TenantKind>('Reporting entity');
   const [busy, setBusy] = useState(false);
@@ -41,7 +59,7 @@ export function SignIn() {
       userName: displayName,
       role: mine?.role ?? 'partner',
       unitId: null,
-      screen: 'units',
+      screen: landingScreen(state, tenantId),
     });
   };
 
@@ -49,7 +67,14 @@ export function SignIn() {
     setBusy(true); setError(null);
     try {
       const id = await createTenant(tName.trim(), tKind);
-      enter(id);
+      setUi({
+        signedIn: true,
+        tenantId: id,
+        userName: displayName,
+        role: 'partner',
+        unitId: null,
+        screen: 'setup',
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not create tenant');
     } finally {
@@ -82,17 +107,14 @@ export function SignIn() {
   return (
     <div style={{ minHeight: '100vh', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(420px,1fr))' }}>
       <div style={{ background: 'var(--color-accent-900)', color: 'var(--color-bg)', padding: '56px 56px 40px', display: 'flex', flexDirection: 'column', gap: 32 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 26, height: 26, background: 'var(--color-bg)' }} />
-          <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 19, letterSpacing: '-0.01em' }}>ARO SUITE</div>
-        </div>
+        <AroWordmark inverse size={26} />
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 460 }}>
           <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 38, lineHeight: 1.05, letterSpacing: '-0.025em', textWrap: 'pretty' }}>
             Own the ARO process, end to end.
           </div>
           <div style={{ fontSize: 14, lineHeight: 1.55, opacity: 0.82, textWrap: 'pretty' }}>
             Built for the group reporting teams who prepare asset retirement obligations — extract intake,
-            independent recalculation, roll-forward, disclosure note and postings in one file.
+            measurement, roll-forward, disclosure note and postings in one file.
           </div>
           <div style={{ display: 'flex', gap: 24, paddingTop: 12, borderTop: '1px solid color-mix(in srgb,var(--color-bg) 25%,transparent)', flexWrap: 'wrap' }}>
             {FACTS.map(([k, v]) => (
@@ -112,12 +134,20 @@ export function SignIn() {
           ) : !isSignedIn ? (
             <>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em' }}>Sign in</div>
+              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 24, letterSpacing: '-0.02em' }}>
+                {signingUp ? 'Create an account' : 'Sign in'}
+              </div>
               <div style={{ fontSize: 12.5, lineHeight: 1.5 }} className="muted">
-                Use your work account. New tenants start empty; you become the first engagement partner.
+                {signingUp
+                  ? 'Use the work email you were invited with. After you create the account you will see the tenants you belong to.'
+                  : 'Use your work account. New tenants start empty; you become the first engagement partner.'}
               </div>
             </div>
-            <ClerkSignIn routing="hash" />
+            {signingUp ? (
+              <ClerkSignUp appearance={aroClerkAppearance()} signInUrl="/" />
+            ) : (
+              <ClerkSignIn appearance={aroClerkAppearance()} signUpUrl="/?auth=signup" />
+            )}
             </>
           ) : !ready ? (
               <div className="muted">Loading your workspaces…</div>

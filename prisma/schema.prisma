@@ -25,9 +25,11 @@ model Tenant {
   members        Membership[]
   units          ReportingUnit[]
   curves         Curve[]
-  accounts       Account[]
-  segments       CodingSegment[]
-  postingRules   PostingRule[]
+  accounts         Account[]
+  segments         CodingSegment[]
+  postingRules     PostingRule[]
+  postingScenarios PostingScenario[]
+  aroAssetClasses  AroAssetClass[]
   settings       TenantSettings?
   authority      Authority[]
   changeLog      ChangeLog[]
@@ -72,15 +74,17 @@ model Membership {
 }
 
 model TenantSettings {
-  tenantId        String   @id
-  defaults        Json
-  frameworks      Json
-  retentionYears  Int      @default(7)
-  legalHold       Boolean  @default(false)
-  sso             Boolean  @default(false)
-  scim            Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  tenantId               String   @id
+  defaults               Json
+  frameworks             Json
+  setup                  Json?
+  costEstimateTemplates  Json     @default("[]")
+  retentionYears         Int      @default(7)
+  legalHold              Boolean  @default(false)
+  sso                    Boolean  @default(false)
+  scim                   Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -117,8 +121,17 @@ model ReportingUnit {
   latePolicy           String
   status               String
   stage                String
+  setupCompletedAt     DateTime?
   dayCount             String
   glTotal              Float?
+  openingGlProvision   Float?
+  openingGlArc         Float?
+  openingGlAroCost     Float?
+  openingGlAroAccum    Float?
+  openingGlTcaCost     Float?
+  openingGlTcaAccum    Float?
+  /** Conversion TCA listing and obligation ids frozen at opening lock. */
+  openingSnapshot      Json?
   conversionAgreed     Boolean  @default(false)
   noteGenerated        Boolean  @default(false)
   yearLocked           Boolean  @default(false)
@@ -127,6 +140,7 @@ model ReportingUnit {
 
   tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assumptions  Assumptions?
+  tcaAssets    TcaAsset[]
   obligations  Obligation[]
   periods      Period[]
   extracts     Extract[]
@@ -134,6 +148,7 @@ model ReportingUnit {
   freezes      Freeze[]
   attestedGates AttestedGate[]
   signatures   Signature[]
+  recalcRegister RecalcRegister?
   changeLog    ChangeLog[]
   auditEvents  AuditEvent[]
 
@@ -153,6 +168,8 @@ model Assumptions {
   materialityUsd       Float
   materialityPct       Float
   extrapolationPolicy  String
+  layerPolicy          String   @default("LIFO")
+  discount             Boolean  @default(true)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -172,6 +189,7 @@ model Curve {
   extrapolation  String
   asAt           String
   isDraft        Boolean  @default(false)
+  locked         Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -195,6 +213,27 @@ model CurvePoint {
 
   @@id([tenantId, curveId, termYears])
   @@map("curve_point")
+}
+
+model TcaAsset {
+  id               String   @id
+  reportingUnitId  String
+  assetNumber      String
+  description      String   @default("")
+  assetClass       String   @default("")
+  acquisitionDate  String   @default("")
+  site             String   @default("")
+  scope            String   @default("Undecided")
+  scopeReason      String   @default("")
+  payload          Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  unit ReportingUnit @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+
+  @@unique([reportingUnitId, assetNumber])
+  @@index([reportingUnitId])
+  @@map("tca_asset")
 }
 
 model Obligation {
@@ -255,7 +294,7 @@ model Revision {
   @@map("revision")
 }
 
-/// Present for US GAAP / ASPE. IFRS continues to derive layers; this table stays empty until that engine work lands.
+/// Stored when US GAAP / ASPE lock a rate per layer. IFRS and PSAS leave this empty.
 model Layer {
   id            String   @id @default(cuid())
   obligationId  String
@@ -293,15 +332,17 @@ model ObligationEvent {
 }
 
 model Settlement {
-  id            String   @id
-  obligationId  String
-  kind          String
-  pct           Float
-  actualCost    Float
-  settledOn     String
-  posted        Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String   @id
+  obligationId     String
+  kind             String
+  pct              Float
+  actualCost       Float
+  settledOn        String
+  posted           Boolean  @default(false)
+  disposeAroAsset  Boolean  @default(false)
+  relatedAssetSold Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
 
@@ -337,6 +378,7 @@ model Account {
   className         String   @map("class")
   engineRole        String
   requiredSegments  Json
+  columns           Json     @default("{}")
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -378,6 +420,42 @@ model PostingRule {
 
   @@index([tenantId])
   @@map("posting_rule")
+}
+
+model PostingScenario {
+  id           String   @id
+  tenantId     String
+  name         String
+  isDefault    Boolean  @default(false)
+  roleAccounts   Json
+  completedRoles Json     @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetClasses AroAssetClass[]
+
+  @@index([tenantId])
+  @@map("posting_scenario")
+}
+
+model AroAssetClass {
+  id         String   @id
+  tenantId   String
+  code       String   @default("")
+  name       String
+  scenarioId String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario PostingScenario @relation(fields: [scenarioId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@index([tenantId, code])
+  @@index([scenarioId])
+  @@map("aro_asset_class")
 }
 
 model JournalBatch {
@@ -574,4 +652,61 @@ model AuditEvent {
   @@index([tenantId, at])
   @@index([reportingUnitId])
   @@map("audit_event")
+}
+
+/// Mode 1 — the recalculation register for a reporting unit.
+///
+/// One per unit: the assumptions the independent recalculation runs on, the
+/// provenance of the extracts it was built from, and the control total that
+/// proves the population complete. The rows hang off it.
+model RecalcRegister {
+  id              String   @id
+  reportingUnitId String   @unique
+  fyEnd           String
+  /// Decimal, e.g. 0.02 for 2%.
+  inflation       Float
+  materialityUsd  Float
+  /// Percent, e.g. 0.1 for one tenth of one percent.
+  materialityPct  Float
+  /// The client's imported curve. Null while the built-in table applies.
+  curve           Json?
+  curveSource     String
+  /// { files: string[], summary: string } per extract, or null.
+  rep04           Json?
+  rep06           Json?
+  /// The completeness control total. Null until it is entered.
+  trialBalancePv  Float?
+  /// True while the register still holds illustrative rows.
+  seeded          Boolean  @default(true)
+  signedOffBy     String?
+  signedOffAt     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  unit ReportingUnit  @relation(fields: [reportingUnitId], references: [id], onDelete: Cascade)
+  rows RecalcRegisterRow[]
+
+  @@map("recalc_register")
+}
+
+/// One obligation as the extracts describe it.
+model RecalcRegisterRow {
+  id               String   @id
+  registerId       String
+  /// ARO obligation no. Not unique: a duplicate is a blocker the register
+  /// must be able to hold and report, not something the schema silently drops.
+  obligationNo     String
+  cost             Float
+  costEstimateDate String
+  settlementDate   String
+  /// Decimal. Null when the curve lookup applies.
+  rateOverride     Float?
+  sourceFv         Float?
+  sourcePv         Float?
+  ord              Int
+
+  register RecalcRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
+
+  @@index([registerId])
+  @@map("recalc_register_row")
 }

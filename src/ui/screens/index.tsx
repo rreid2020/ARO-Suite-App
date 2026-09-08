@@ -8,30 +8,50 @@
 
 import React from 'react';
 import { useStore, useTenant, useUnitData } from '../../core/store';
-import { stepById } from '../../core/nav';
+import { stepById, resolveUnitScreen } from '../../core/nav';
 import { DOMAINS } from '../../core/authority';
 import { Empty, ReadOnlyBanner } from '../components';
 import { Register } from './Register';
-import { Units, Curves, Users, Company, Frameworks, Authority, ChangeLog, AuditTrail, Portal } from './tenant';
-import { Periods, Intake, Normalise, Match, Conversion, Scope } from './prepare';
-import { Cost, Adjust, Layers, Arc, Ledger, Recalc } from './measure';
-import { Calendar, Reval, Settle, Journals, Batches, Recon } from './close';
+import { ChangeLog, AuditTrail, Portal } from './tenant';
+import { Setup } from './setup';
+import { UnitChart, UnitPosting, UnitSetup, UnitOpening } from './unitSetup';
+import { Periods, Intake, Normalise } from './prepare';
+import { Scope } from './scoping';
+import { Layers, Ledger } from './measure';
+import { Calendar, MonthEnd, Reval, Settle, Journals, Batches, Recon } from './close';
 import { Rollf, Py, Sens } from './report';
 import { Freeze, Sampling, Complete, Review } from './assure';
+import { RecalcImport, RecalcSource, Recalculation, RecalcCompare, RecalcExceptions, RecalcVariance } from './recalc';
 
 const SCREENS: Record<string, React.ComponentType> = {
-  // Tenant scope
-  units: Units, curves: Curves, users: Users, company: Company,
-  frameworks: Frameworks, authority: Authority, changelog: ChangeLog,
-  audit: AuditTrail, portal: Portal,
+  // Tenant scope. Former Firm screens (units, curves, users, company,
+  // frameworks, authority) render Setup — FIRM_SETUP_ALIASES maps them to a step.
+  units: Setup, setup: Setup,
+  curves: Setup, users: Setup, company: Setup, frameworks: Setup, authority: Setup,
+  changelog: ChangeLog, audit: AuditTrail, portal: Portal,
+  'unit-setup': UnitSetup,
+  'unit-chart': UnitChart,
+  'unit-posting': UnitPosting,
+  'unit-opening': UnitOpening,
+  // Leftover Prepare ids: conversion and match are the old extract/match
+  // flow. They open the Setup opening register rather than a second UI.
+  conversion: UnitOpening, match: UnitOpening,
+  // Leftover Measure ids `recalc`, `cost`, `adjust`, `arc` resolve to register.
+  // Opening an obligation expands under the register row; there is no separate
+  // obligation screen.
   // Prepare
-  periods: Periods, intake: Intake, conversion: Conversion,
-  normalise: Normalise, match: Match, scope: Scope,
+  periods: Periods, intake: Intake,
+  normalise: Normalise, scope: Scope,
+  // Mode 1 — recalculation & completeness. Auditor tenancy only: a reporting
+  // entity running this product as its module of record is the source system,
+  // so it has nothing to recalculate against (see nav.ts, UNIT_SCREEN_ALIASES).
+  'recalc-import': RecalcImport, 'recalc-source': RecalcSource,
+  recalculation: Recalculation, 'recalc-compare': RecalcCompare,
+  'recalc-exceptions': RecalcExceptions, 'recalc-variance': RecalcVariance,
   // Measure
-  register: Register, cost: Cost, adjust: Adjust, layers: Layers,
-  arc: Arc, ledger: Ledger, recalc: Recalc,
+  register: Register, layers: Layers, ledger: Ledger,
   // Close
-  calendar: Calendar, reval: Reval, settle: Settle,
+  calendar: Calendar, 'month-end': MonthEnd, reval: Reval, settle: Settle,
   journals: Journals, batches: Batches, recon: Recon,
   // Report
   rollf: Rollf, py: Py, sens: Sens,
@@ -43,11 +63,12 @@ export function Screen() {
   const { state, ui } = useStore();
   const tenant = useTenant();
   const data = useUnitData();
-  const Component = SCREENS[ui.screen];
+  const screen = resolveUnitScreen(ui.screen);
+  const Component = SCREENS[screen];
 
   if (!Component) return <Empty>That screen does not exist.</Empty>;
 
-  const step = stepById(ui.screen);
+  const step = stepById(screen);
   // A step needs a reporting unit; a firm screen does not.
   if (step && !data) return <Empty>Open a reporting unit to reach this step.</Empty>;
 

@@ -9,6 +9,9 @@
 
 export * from './dates';
 export * from './curve';
+export * from './framework';
 export * from './derive';
 export * from './ladder';
 export * from './rollforward';
+export * from './postingCases';
+export * from './recalc';

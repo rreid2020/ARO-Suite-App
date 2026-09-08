@@ -18,6 +18,7 @@ import { Domain } from './authority';
 import { Repository } from './repository';
 import { HttpRepository } from './httpRepository';
 import { emptyAppState } from './emptyState';
+import { stampLayeredUnits } from './createUnit';
 
 interface WriteArgs<T> {
   domain: Domain;
@@ -45,6 +46,8 @@ export interface Store {
   createTenant: (name: string, kind: string) => Promise<string>;
   loadSample: () => Promise<void>;
   deleteTenant: (id: string) => Promise<void>;
+  inviteUser: (name: string, email: string, role: string) => Promise<void>;
+  removeUser: (userId: string) => Promise<void>;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -55,7 +58,7 @@ const initialUi: UiState = {
   role: 'preparer',
   tenantId: null,
   unitId: null,
-  screen: 'units',
+  screen: 'setup',
   tab: '',
   sub: '',
   setupTrail: null,
@@ -136,6 +139,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setState((s) => {
         const next = structuredClone(s);
         if (result.ok) args.apply(next, result.value);
+        stampLayeredUnits(next);
         next.chg = [...result.changes, ...next.chg];
         next.log = [...result.audit, ...next.log];
         return next;
@@ -219,6 +223,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setState((s) => {
         const next = structuredClone(s);
         fn(next);
+        stampLayeredUnits(next);
         next.log = [entry, ...next.log];
         return next;
       });
@@ -252,15 +257,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (next) setState(next);
   }, [repo]);
 
+  const inviteUser = useCallback(async (name: string, email: string, role: string) => {
+    const tenantId = ui.tenantId;
+    if (!tenantId) throw new Error('Choose a tenant first.');
+    const result = await repo.inviteUser(tenantId, { name, email, role });
+    setState(result.state);
+    setLoaded(true);
+    setUi({ toast: { kind: 'ok', text: result.message } });
+  }, [repo, ui.tenantId, setUi]);
+
+  const removeUser = useCallback(async (userId: string) => {
+    const tenantId = ui.tenantId;
+    if (!tenantId) throw new Error('Choose a tenant first.');
+    const result = await repo.removeUser(tenantId, userId);
+    setState(result.state);
+    setLoaded(true);
+    setUi({ toast: { kind: 'ok', text: result.message } });
+  }, [repo, ui.tenantId, setUi]);
+
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || ui.userName;
 
   const value = useMemo<Store>(
     () => ({
       state, ui, setUi, write, restoreChange, record, apply, reset, storageBytes: bytes, repo,
       ready: loaded || !isSignedIn,
-      createTenant, loadSample, deleteTenant,
+      createTenant, loadSample, deleteTenant, inviteUser, removeUser,
     }),
-    [state, ui, setUi, write, restoreChange, record, apply, reset, bytes, repo, loaded, isSignedIn, createTenant, loadSample, deleteTenant],
+    [state, ui, setUi, write, restoreChange, record, apply, reset, bytes, repo, loaded, isSignedIn, createTenant, loadSample, deleteTenant, inviteUser, removeUser],
   );
 
   // Keep the signed-in name in UI state for the audit actor without looping.

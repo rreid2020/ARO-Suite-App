@@ -12,8 +12,11 @@ import { buildCalendar } from '../core/periods';
 import { defaultAuthority } from '../core/authority';
 import {
   Account, AppState, CodingSegment, Framework, Obligation, ObligationEvent,
-  PostingRule, ReportingUnit, Tenant, TenantSettings, UnitData, User,
+  PostingRule, PostingScenario, ReportingUnit, TcaAsset, Tenant, TenantSettings, UnitData, User,
 } from '../core/types';
+import { BUILT_IN_CURVE, RecalcRegister } from '../core/recalc';
+import { RecalcRow, recalculate } from '../engine/recalc';
+import { directFromLines, settlementInForce } from '../engine/derive';
 
 function rng(seed: number) {
   let s = seed >>> 0;
@@ -31,10 +34,12 @@ const round = (n: number, dp = 2) => Math.round(n * 10 ** dp) / 10 ** dp;
 export const ENGINE_ROLES = [
   'ARO provision', 'Retirement cost asset', 'Accumulated depreciation',
   'Accretion expense', 'Depreciation expense', 'Operating costs',
-  'Write-back to income', 'Cash', 'FX translation reserve', 'Suspense',
+  'Write-back to income', 'Cash', 'Gain on disposal', 'Loss on disposal',
+  'FX translation reserve', 'Suspense',
 ];
 
-const ACCOUNTS: [string, string, string, string][] = [
+/** One GL per engine role. Added to a tenant chart when the imported GLs cannot fill that role. */
+export const ENGINE_ROLE_GLS: readonly [string, string, string, string][] = [
   ['21500', 'Provision — asset retirement obligations', 'Liability', 'ARO provision'],
   ['16100', 'Retirement cost asset', 'Asset', 'Retirement cost asset'],
   ['16190', 'Accumulated depreciation — retirement cost asset', 'Asset', 'Accumulated depreciation'],
@@ -43,20 +48,32 @@ const ACCOUNTS: [string, string, string, string][] = [
   ['61000', 'Site restoration operating costs', 'Expense', 'Operating costs'],
   ['48000', 'Write-back of surplus provision', 'Income', 'Write-back to income'],
   ['10100', 'Cash at bank', 'Asset', 'Cash'],
+  ['42400', 'Gain on disposal of ARO', 'Income', 'Gain on disposal'],
+  ['51500', 'Loss on disposal of ARO', 'Expense', 'Loss on disposal'],
   ['32100', 'Foreign currency translation reserve', 'Equity', 'FX translation reserve'],
   ['99999', 'Suspense — unmapped ARO events', 'Liability', 'Suspense'],
 ];
 
-const POSTING_RULES: [string, string, string][] = [
+export const ENGINE_POSTING_RULES: [string, string, string][] = [
   ['addition', 'Retirement cost asset', 'ARO provision'],
+  ['expense-recognition', 'Operating costs', 'ARO provision'],
   ['accretion', 'Accretion expense', 'ARO provision'],
   ['revision', 'Retirement cost asset', 'ARO provision'],
+  ['revision-unproductive', 'Operating costs', 'ARO provision'],
+  ['downward-excess', 'Accretion expense', 'ARO provision'],
   ['settlement', 'ARO provision', 'Cash'],
   ['overrun', 'Operating costs', 'Cash'],
   ['surplus', 'ARO provision', 'Write-back to income'],
   ['depreciation', 'Depreciation expense', 'Accumulated depreciation'],
+  ['disposal', 'ARO provision', 'Gain on disposal'],
+  ['asset-retirement', 'Accumulated depreciation', 'Retirement cost asset'],
   ['fx', 'ARO provision', 'FX translation reserve'],
 ];
+
+/** Event types the engine emits. Posting rules for these must exist; they are not user-defined. */
+export const ENGINE_EVENT_TYPES = ENGINE_POSTING_RULES.map(([eventType]) => eventType);
+
+export const ACCOUNT_CLASSES = ['Asset', 'Liability', 'Equity', 'Income', 'Expense'] as const;
 
 export const FRAMEWORKS: Framework[] = [
   {
@@ -76,12 +93,13 @@ export const FRAMEWORKS: Framework[] = [
     engineEffects: [
       'A single discount rate, looked up on the closing curve, is applied to the whole obligation.',
       'Layers are derived for presentation only and do not carry their own rate.',
+      'A year-end revaluation reprices the whole population onto the closing table. That movement is a change in estimate.',
     ],
   },
   {
-    id: 'usgaap', name: 'US GAAP (ASC 410-20)', wired: false,
+    id: 'usgaap', name: 'US GAAP (ASC 410-20)', wired: true,
     axes: {
-      'Measurement basis': 'Fair value — expected present value technique',
+      'Measurement basis': 'Expected present value technique',
       'Discount rate': 'Credit-adjusted risk-free rate at the date the layer arose',
       'Rate per layer': 'Yes — each upward revision carries the rate in force that day',
       'Revisions': 'Upward revision creates a new layer; downward removes layers',
@@ -93,12 +111,13 @@ export const FRAMEWORKS: Framework[] = [
       'Change in estimate': 'Prospective (ASC 250)',
     },
     engineEffects: [
-      'NOT YET WIRED — layers must be stored, each accreting at its own rate for the rest of its life.',
-      'This is decision 2 in the README and it changes the obligation and layer tables.',
+      'Each layer is stored. An upward cost revision creates a new layer at the rate in force that day; that rate is locked for the rest of the layer\'s life.',
+      'A downward cost revision consumes layers in the unit\'s policy order (LIFO, FIFO or pro-rata).',
+      'A later closing curve does not remeasure existing layers. It becomes the lookup for layers that arise after it is in force.',
     ],
   },
   {
-    id: 'psas', name: 'PSAS (PS 3280)', wired: false,
+    id: 'psas', name: 'PSAS (PS 3280)', wired: true,
     axes: {
       'Measurement basis': 'Estimate of the cost directly attributable to the retirement',
       'Discount rate': 'Entity-specific, or undiscounted where permitted',
@@ -112,24 +131,28 @@ export const FRAMEWORKS: Framework[] = [
       'Change in estimate': 'Prospective',
     },
     engineEffects: [
-      'NOT YET WIRED — optional discounting. The engine currently always discounts.',
+      'A single current rate, as IFRS, when this reporting unit discounts.',
+      'Discounting may be turned off on the unit. When it is, inflation is not applied either, and the provision is the cost at current prices.',
     ],
   },
   {
-    id: 'aspe', name: 'ASPE (Section 3110)', wired: false,
+    id: 'aspe', name: 'ASPE (Section 3110)', wired: true,
     axes: {
-      'Measurement basis': 'Fair value where determinable',
+      'Measurement basis': 'Present value where determinable',
       'Discount rate': 'Credit-adjusted risk-free rate at the date the layer arose',
       'Rate per layer': 'Yes',
       'Revisions': 'Layer-based, as US GAAP',
       'Downward revision': 'Removes layers in the policy order',
-      'Discounting': 'Required where fair value is used',
+      'Discounting': 'Required where a present value is used',
       'Unwinding presented as': 'Accretion expense',
       'Inflation': 'Built into the expected cash flows',
       'Constructive obligations': 'Legal obligations only',
       'Change in estimate': 'Prospective',
     },
-    engineEffects: ['NOT YET WIRED — layers with a rate per layer, as US GAAP.'],
+    engineEffects: [
+      'Layers with a rate per layer, as US GAAP. Each upward revision locks the rate in force that day.',
+      'A downward revision consumes layers in the unit\'s policy order. Existing layers are not remeasured onto a later curve.',
+    ],
   },
 ];
 
@@ -160,7 +183,7 @@ export const SCOPING_REASONS = [
 export const REMEASUREMENT_REASONS = [
   'Revised engineering estimate', 'Contractor quotation received',
   'Licence extension', 'Early abandonment decision', 'Regulatory change',
-  'Change in restoration standard', 'Inflation reassessment', 'Scope change',
+  'Change in restoration standard',   'Inflation reassessment', 'Scope change', 'Write-off',
 ];
 
 const OBLIGATION_TYPES = ['Well abandonment', 'Site restoration', 'Plant decommissioning', 'Pipeline removal', 'Tailings closure', 'Mine reclamation'];
@@ -202,27 +225,105 @@ function priorGbpCurve(): Curve {
 
 /* ── Tenant construction ────────────────────────────────────────────────── */
 
-function settingsFor(tenantId: string): TenantSettings {
-  const accounts: Account[] = ACCOUNTS.map(([code, name, cls, engineRole], i) => ({
+function settingsFor(tenantId: string, complete = false): TenantSettings {
+  const accounts: Account[] = ENGINE_ROLE_GLS.map(([code, name, cls, engineRole], i) => ({
     id: `${tenantId}-acc-${i}`, tenantId, code, name, cls, engineRole,
     requiredSegments: ['Company', 'Cost centre'],
+    columns: { Company: '1000', 'Cost centre': 'CC-100' },
   }));
   const segments: CodingSegment[] = [
     { id: `${tenantId}-seg-1`, tenantId, ord: 1, name: 'Company', required: true, permitted: ['1000', '1100', '2000'] },
     { id: `${tenantId}-seg-2`, tenantId, ord: 2, name: 'Cost centre', required: true, permitted: ['CC-100', 'CC-200', 'CC-300'] },
     { id: `${tenantId}-seg-3`, tenantId, ord: 3, name: 'Project', required: false, permitted: [] },
   ];
-  const postingRules: PostingRule[] = POSTING_RULES.map(([eventType, debitRole, creditRole], i) => ({
+  const postingRules: PostingRule[] = ENGINE_POSTING_RULES.map(([eventType, debitRole, creditRole], i) => ({
     id: `${tenantId}-pr-${i}`, tenantId, eventType, debitRole, creditRole, engineEmitted: true,
   }));
+  const postingScenarios: PostingScenario[] = [{
+    id: `${tenantId}-scn-default`,
+    tenantId,
+    name: 'Standard ARO',
+    isDefault: true,
+    accounts: Object.fromEntries(accounts.filter((a) => a.engineRole).map((a) => [a.engineRole, a.id])),
+    completedRoles: [],
+  }];
   return {
-    accounts, segments, postingRules,
+    accounts, segments, postingRules, postingScenarios, aroAssetClasses: [],
+    costEstimateTemplates: [],
     frameworks: structuredClone(FRAMEWORKS),
     defaults: {
       inflation: 0.025, contingency: 0.10, dayCount: '30/360 US (DAYS360)',
       termConvention: 'Round up to whole year (SAP)', calendarType: 'Monthly (12)',
+      frameworkId: 'ifrs',
     },
+    setup: complete
+      ? {
+          current: 'unit' as const,
+          savedAt: '2025-01-01T00:00:00Z',
+          defaultsConfirmedAt: '2025-01-01T00:00:00Z',
+          completedAt: '2025-01-01T00:00:00Z',
+        }
+      : {
+          current: 'unit' as const,
+          savedAt: new Date().toISOString(),
+          defaultsConfirmedAt: null,
+          completedAt: null,
+        },
     retentionYears: 7, legalHold: false, sso: true, scim: false,
+  };
+}
+
+/**
+ * A synthetic recalculation register — Mode 1 demo data.
+ *
+ * Built from the *same* obligations the unit measures, then perturbed: the
+ * reported figures agree with the recalculation except on a handful of rows,
+ * where the escalation or the discounting is nudged so the variance analysis,
+ * the bridge and the exception list all have something real to show. The
+ * control total is set to agree with the reported population, so completeness
+ * passes and the variances are what a reviewer is left looking at.
+ *
+ * Every figure is generated from the fixed PRNG. None of it is client data.
+ */
+function recalcRegisterFor(unit: ReportingUnit, obligations: Obligation[], seed: number): RecalcRegister {
+  const r = rng(seed);
+  const inflation = 0.02;
+  const curve = BUILT_IN_CURVE;
+
+  const rows: RecalcRow[] = obligations.map((o, i) => ({
+    id: o.ref,
+    cost: round(directFromLines(o.lines)),
+    costEstimateDate: o.costEstimateDate,
+    settlementDate: settlementInForce(o),
+    rateOverride: null,
+    sourceFv: null,
+    sourcePv: null,
+  }));
+
+  const withSource = rows.map((row, i) => {
+    // One row in eight is reported by the source system but absent from its
+    // own extract, so the register has uncompared rows to disclose.
+    if (r() > 0.88) return row;
+    const k = recalculate(row, { fyEnd: unit.fyEnd, inflation }, curve);
+    // One row in six carries a real difference; the rest agree to the cent.
+    const drift = r() > 0.84 ? 1 + (r() - 0.5) * 0.02 : 1;
+    return { ...row, sourceFv: round(k.fv * drift), sourcePv: round(k.pv * drift) };
+  });
+
+  const reported = withSource.reduce((n, x) => n + (x.sourcePv ?? 0), 0);
+
+  return {
+    fyEnd: unit.fyEnd,
+    inflation,
+    materiality: { usd: 1000, pct: 0.1 },
+    rows: withSource,
+    curve: null,
+    curveSource: '',
+    rep04: { files: ['REP04_ARO_EXTRACT_2025.xlsx'], summary: `1 extract · ${withSource.length} obligations` },
+    rep06: { files: ['REP06_TB_PROVISIONS_2025.xlsx'], summary: `1 extract · ${withSource.filter((x) => x.sourcePv != null).length} matched` },
+    trialBalancePv: round(reported),
+    seeded: false,
+    signedOff: null,
   };
 }
 
@@ -262,12 +363,12 @@ function obligationsFor(unitId: string, n: number, seed: number): Obligation[] {
       site: pick(r, SITES),
       region: pick(r, REGIONS),
       type,
+      aroAssetClass: type,
       basis: r() > 0.2 ? 'Legal' : 'Constructive',
       assetId: `AS-${10_000 + i}`,
-      status: r() > 0.06 ? 'In scope' : 'Scoped out',
-      scopeReason: r() > 0.06 ? '' : pick(r, SCOPING_REASONS),
-      /** The source figure this row is recalculated against — Mode 1. */
-      sourcePv: 0,
+      aroAssetNumber: `ARO-${10_000 + i}`,
+      status: 'In scope',
+      scopeReason: '',
       varianceCause: '',
     } as Obligation;
   });
@@ -290,6 +391,68 @@ function eventsFor(unitId: string, periods: string[], obligations: Obligation[],
   return out;
 }
 
+function tcaAssetsFor(unitId: string, obligations: Obligation[]): TcaAsset[] {
+  const assets: TcaAsset[] = [];
+  const seen = new Set<string>();
+  for (const o of obligations) {
+    const assetNumber = String(o.assetId ?? '');
+    const key = assetNumber.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    assets.push({
+      id: `${unitId}-tca-${assets.length}`,
+      assetNumber,
+      description: String(o.assetDescription || o.description),
+      assetClass: String(o.aroAssetClass || o.type || ''),
+      acquisitionDate: String(o.assetAcquisitionDate || ''),
+      site: String(o.site || ''),
+      acquisitionCost: typeof o.openingArc === 'number' && typeof o.openingAccumAmort === 'number'
+        ? o.openingArc + o.openingAccumAmort
+        : null,
+      accumAmort: typeof o.openingAccumAmort === 'number' ? o.openingAccumAmort : null,
+      totalUl: typeof o.totalUl === 'number' ? o.totalUl : null,
+      expiredUl: typeof o.expiredUl === 'number' ? o.expiredUl : null,
+      assetStatus: 'Active',
+      scope: 'In scope',
+      scopeReason: '',
+      columns: {},
+    });
+  }
+  assets.push({
+    id: `${unitId}-tca-out`,
+    assetNumber: `AS-OUT-${unitId}`,
+    description: 'Retired pad — no remaining obligation',
+    assetClass: 'Well abandonment',
+    acquisitionDate: '2001-03-31',
+    site: SITES[0],
+    acquisitionCost: 0,
+    accumAmort: 0,
+    totalUl: null,
+    expiredUl: null,
+    assetStatus: 'Disposed',
+    scope: 'Scoped out',
+    scopeReason: 'Asset already retired',
+    columns: {},
+  });
+  assets.push({
+    id: `${unitId}-tca-und`,
+    assetNumber: `AS-UND-${unitId}`,
+    description: 'Awaiting scoping review',
+    assetClass: 'Site restoration',
+    acquisitionDate: '2019-06-30',
+    site: SITES[1],
+    acquisitionCost: 0,
+    accumAmort: 0,
+    totalUl: null,
+    expiredUl: null,
+    assetStatus: 'Active',
+    scope: 'Undecided',
+    scopeReason: '',
+    columns: {},
+  });
+  return assets;
+}
+
 function unitData(unit: ReportingUnit, obligationCount: number, seed: number): UnitData {
   const periods = buildCalendar(unit.id, unit.fyEnd, unit.calendarType);
   // Periods 1-10 closed, 11 soft closed, 12 open — a unit mid-close.
@@ -297,7 +460,10 @@ function unitData(unit: ReportingUnit, obligationCount: number, seed: number): U
     p.status = i < 10 ? 'Closed' : i === 10 ? 'Soft closed' : 'Open';
   });
   const obligations = obligationsFor(unit.id, obligationCount, seed);
+  const tcaAssets = tcaAssetsFor(unit.id, obligations);
   return {
+    recalc: recalcRegisterFor(unit, obligations, seed + 7),
+    tcaAssets,
     obligations,
     events: eventsFor(unit.id, periods.slice(0, 11).map((p) => p.id), obligations, seed + 1),
     extracts: [
@@ -325,6 +491,13 @@ function unitData(unit: ReportingUnit, obligationCount: number, seed: number): U
     periods,
     attestedGates: [],
     glTotal: null,
+    openingGlProvision: null,
+    openingGlArc: null,
+    openingGlAroCost: null,
+    openingGlAroAccum: null,
+    openingGlTcaCost: null,
+    openingGlTcaAccum: null,
+    openingSnapshot: null,
     conversionAgreed: false,
     noteGenerated: false,
     yearLocked: false,
@@ -372,21 +545,6 @@ export function seedState(): AppState {
     hu1: unitData(units.halloran[0], 46, 1001),
   };
 
-  // Give the parent unit a source figure per row so Mode 1 has something to
-  // recalculate against, with a handful of deliberate divergences.
-  // Most rows agree to within a rounding difference. A handful diverge by
-  // enough to breach materiality, so the variance-cause workflow has something
-  // real to work on rather than a screen of immaterial noise.
-  const r = rng(777);
-  for (const o of data.ku1.obligations) {
-    const wobble = r() > 0.82 ? 1 + (r() - 0.5) * 0.55 : 1 + (r() - 0.5) * 0.002;
-    (o as Record<string, unknown>).sourcePv = wobble;
-  }
-  for (const o of data.hu1.obligations) {
-    const wobble = r() > 0.82 ? 1 + (r() - 0.5) * 0.55 : 1 + (r() - 0.5) * 0.002;
-    (o as Record<string, unknown>).sourcePv = wobble;
-  }
-
   return {
     tenants,
     users,
@@ -398,9 +556,9 @@ export function seedState(): AppState {
     units,
     data,
     settings: {
-      kestrel: settingsFor('kestrel'),
-      northgate: settingsFor('northgate'),
-      halloran: settingsFor('halloran'),
+      kestrel: settingsFor('kestrel', true),
+      northgate: settingsFor('northgate', true),
+      halloran: settingsFor('halloran', true),
     },
     authority: {
       kestrel: defaultAuthority('Reporting entity'),
@@ -424,6 +582,7 @@ function mkUnit(
     latePolicy: 'Prior-period adjustment',
     status: 'In progress',
     stage: 'Measure',
+    setupCompletedAt: '2025-01-01T00:00:00Z',
     inflation: 0.025,
     contingency: 0.10,
     curveId,

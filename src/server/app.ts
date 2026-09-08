@@ -10,6 +10,7 @@ import { hydrateAppState } from './hydrate';
 import { appendAudit, appendChanges, persistAppState } from './persist';
 import { scopeState } from './scope';
 import { prefixSeed } from './seedPrefix';
+import { inviteToTenant, removeUserFromTenant } from './identity';
 import { serverWrite } from './writeService';
 import type { AuditEvent, ChangeEntry } from '../core/writePath';
 
@@ -35,7 +36,7 @@ app.use('/api/*', async (c, next) => {
 
 app.get('/api/state', async (c) => {
   const auth = c.get('auth');
-  const state = await hydrateAppState(prisma, auth.tenantIds);
+  const state = await hydrateAppState(prisma, auth.tenantIds, { currentClerkUserId: auth.clerkUserId });
   return c.json(state);
 });
 
@@ -43,7 +44,7 @@ app.put('/api/state', async (c) => {
   const auth = c.get('auth');
   const state = await c.req.json<AppState>();
   const stripped = scopeState(state, auth.tenantIds);
-  await persistAppState(prisma, stripped, auth.tenantIds, auth.appUser.id);
+  await persistAppState(prisma, stripped, auth.tenantIds, auth.appUser.id, { createMemberships: false });
   return c.json({ ok: true });
 });
 
@@ -70,6 +71,24 @@ app.post('/api/audit', async (c) => {
   return c.json({ ok: true, count: allowed.length });
 });
 
+app.post('/api/tenants/:id/invites', async (c) => {
+  const auth = c.get('auth');
+  const id = c.req.param('id');
+  const body = await c.req.json<{ name?: string; email?: string; role?: string }>();
+  const result = await inviteToTenant(auth, id, body, c.req.header('Origin') ?? undefined);
+  return c.json(result);
+});
+
+app.delete('/api/tenants/:id/members/:userId', async (c) => {
+  const auth = c.get('auth');
+  const result = await removeUserFromTenant(
+    { ...auth, appUserId: auth.appUser.id },
+    c.req.param('id'),
+    c.req.param('userId'),
+  );
+  return c.json(result);
+});
+
 app.post('/api/tenants', async (c) => {
   const auth = c.get('auth');
   const body = await c.req.json<{ name: string; kind: 'Reporting entity' | 'Auditor' }>();
@@ -83,7 +102,7 @@ app.post('/api/tenants', async (c) => {
   state.curves[made.tenant.id] = [];
   state.units[made.tenant.id] = [];
   await persistAppState(prisma, state, [made.tenant.id], auth.appUser.id);
-  const next = await hydrateAppState(prisma, [...auth.tenantIds, made.tenant.id]);
+  const next = await hydrateAppState(prisma, [...auth.tenantIds, made.tenant.id], { currentClerkUserId: auth.clerkUserId });
   return c.json({ tenantId: made.tenant.id, state: next });
 });
 
@@ -104,6 +123,6 @@ app.post('/api/seed', async (c) => {
   const next = await hydrateAppState(prisma, [
     ...auth.tenantIds,
     ...seeded.tenants.map((t) => t.id),
-  ]);
+  ], { currentClerkUserId: auth.clerkUserId });
   return c.json(next);
 });

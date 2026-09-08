@@ -13,6 +13,7 @@ Install
         ├── Assumptions  (curve, inflation, contingency, materiality,
         │                 term convention, calendar type, FY end, framework)
         ├── Accounting periods  (status machine)
+        ├── Tca assets  (master TCA listing; asset number links obligations)
         ├── Obligations
         │   ├── Cost build-up lines
         │   ├── Revisions  (cost | timing)
@@ -31,14 +32,16 @@ reporting unit. Keep one table; vary the label by tenant kind.
 
 ## Note on layers
 
-Layers are currently **derived** in the prototype. Under US GAAP (ASC 410-20)
-and ASPE they must be **stored**: each upward revision creates a new layer
-carrying the discount rate in force on the day it arose, and each layer accretes
-at its own rate for the rest of its life. A downward revision removes layers in
-a policy order (LIFO / FIFO / pro-rata — currently a setting).
+Under IFRS and discounted PSAS, layers are **derived** for presentation: a
+single current rate is applied to the whole obligation. Under US GAAP
+(ASC 410-20) and ASPE they are **stored**: each upward revision creates a new
+layer carrying the discount rate in force on the day it arose, and each layer
+accretes at that rate for the rest of its life. A downward revision removes
+layers in a policy order (LIFO / FIFO / pro-rata). A later closing curve does
+not remeasure existing layers.
 
-This is the single biggest schema consequence of decision 2 in the README.
-Decide before you write the obligation table.
+PSAS (PS 3280) may dispense with discounting on the reporting unit. When it
+does, inflation is not applied either.
 
 ## Proposed tables
 
@@ -53,6 +56,12 @@ reporting_unit(id, tenant_id, entity, client, fy_end, currency, sector,
 assumptions(reporting_unit_id, inflation, contingency, curve_id,
             prior_curve_id, prior_inflation, revalued_on,
             materiality_usd, materiality_pct, extrapolation_policy, …)
+
+tca_asset(id, reporting_unit_id, asset_number, description, asset_class,
+          acquisition_date, site, scope, scope_reason, payload jsonb)
+          -- unique (reporting_unit_id, asset_number); link from obligation.asset_id
+          -- (TCA asset number). Obligation also carries aro_asset_number for the
+          -- retirement-cost asset, a different identifier.
 
 curve(id, tenant_id, name, currency, source, basis, interpolation, as_at, is_draft)
 curve_point(curve_id, term_years, rate)                       -- PK (curve_id, term)
@@ -124,3 +133,12 @@ which account plays each part — "ARO provision", "accretion", "suspense" and s
 on. So `account.engine_role` is the join, not the code. A role left unfilled is
 reported and its events go to suspense (99999); a role held by two accounts is
 reported as a coin toss. **The engine never posts to a hard-coded account code.**
+
+Engine *posting cases* are the economic journals (initial recognition, change of
+estimate by remaining life, accretion, settlement true-up then consume, sale,
+retire the ARO asset). A downward revision always reduces the provision and the
+retirement-cost asset by the full change. If that would take NBV below zero,
+accumulated amortization is reversed against amortization expense until NBV is
+zero; any remainder of the provision reduction is credited to accretion expense
+rather than the asset. A posting *scenario* is the organisation's map of imported
+GLs onto those debit and credit roles, per asset class. Do not conflate the two.

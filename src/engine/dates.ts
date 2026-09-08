@@ -105,11 +105,99 @@ export function days360(a: string, b: string): number {
 }
 
 /**
- * Term in years on the 30/360 US basis. This is the only term measure in the
- * product — INVARIANTS §9: never actual/365 anywhere, including for display.
+ * 30E/360 European — Excel DAYS360(a, b, TRUE). A 31st folds to a 30th on
+ * both ends, unconditionally.
+ */
+export function days360eu(a: string, b: string): number {
+  const pa = parseISO(a);
+  const pb = parseISO(b);
+  if (!pa || !pb) return 0;
+  const d1 = pa.d === 31 ? 30 : pa.d;
+  const d2 = pb.d === 31 ? 30 : pb.d;
+  return (pb.y - pa.y) * 360 + (pb.m - pa.m) * 30 + (d2 - d1);
+}
+
+/** Calendar days between two ISO dates. Total: 0 if either date is malformed. */
+export function actualDays(a: string, b: string): number {
+  const pa = parseISO(a);
+  const pb = parseISO(b);
+  if (!pa || !pb) return 0;
+  return (Date.UTC(pb.y, pb.m - 1, pb.d) - Date.UTC(pa.y, pa.m - 1, pa.d)) / 86400000;
+}
+
+export type DayCount =
+  | '30/360 US (DAYS360)'
+  | '30E/360 (European)'
+  | 'Actual/365'
+  | 'Actual/360'
+  | 'Actual/Actual';
+
+export const DAY_COUNTS: DayCount[] = [
+  '30/360 US (DAYS360)',
+  '30E/360 (European)',
+  'Actual/365',
+  'Actual/360',
+  'Actual/Actual',
+];
+
+export const DEFAULT_DAY_COUNT: DayCount = '30/360 US (DAYS360)';
+
+export function isThirty360(dayCount: string): boolean {
+  return dayCount.startsWith('30');
+}
+
+/**
+ * Term in years under the selected day count. Default remains 30/360 US.
+ */
+export function termYears(a: string, b: string, dayCount: DayCount | string = DEFAULT_DAY_COUNT): number {
+  switch (dayCount) {
+    case '30E/360 (European)':
+      return days360eu(a, b) / 360;
+    case 'Actual/365':
+      return actualDays(a, b) / 365;
+    case 'Actual/360':
+      return actualDays(a, b) / 360;
+    case 'Actual/Actual':
+      return termActualActual(a, b);
+    default:
+      return term360(a, b);
+  }
+}
+
+/** ISDA actual/actual: each calendar-year slice is divided by that year's length. */
+function termActualActual(a: string, b: string): number {
+  const pa = parseISO(a);
+  const pb = parseISO(b);
+  if (!pa || !pb) return 0;
+  if (a === b) return 0;
+  const sign = a < b ? 1 : -1;
+  const start = sign === 1 ? a : b;
+  const end = sign === 1 ? b : a;
+  const startP = sign === 1 ? pa : pb;
+  const endP = sign === 1 ? pb : pa;
+  let sum = 0;
+  for (let y = startP.y; y <= endP.y; y++) {
+    const sliceStart = y === startP.y ? start : toISO({ y, m: 1, d: 1 });
+    const sliceEnd = y === endP.y ? end : toISO({ y: y + 1, m: 1, d: 1 });
+    const dim = isLeapYear(y) ? 366 : 365;
+    sum += actualDays(sliceStart, sliceEnd) / dim;
+  }
+  return sign * sum;
+}
+
+/**
+ * Term in years on the 30/360 US basis.
  */
 export function term360(a: string, b: string): number {
   return days360(a, b) / 360;
+}
+
+/**
+ * The prior financial year end — same month-day, one year earlier.
+ * FY ending 2027-03-31 returns 2026-03-31.
+ */
+export function priorYearEnd(fyEnd: string): string {
+  return addMonths(fyEnd, -12);
 }
 
 /**

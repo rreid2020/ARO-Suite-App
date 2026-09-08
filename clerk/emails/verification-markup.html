@@ -1,0 +1,33 @@
+<re-html>
+<re-head>
+    <re-title>{{otp_code}} is your {{app.name}} verification code</re-title>
+</re-head>
+<re-body background-color="#f3f2f2" padding="48px 24px 48px 24px">
+    <re-preheader>Your {{app.name}} verification code is {{otp_code}}</re-preheader>
+    <re-header padding="20px 32px 20px 32px" background-color="#2f6b47">
+        <re-image src="https://aro-suite-app.vercel.app/aro-mark.png" width="32" height="32" alt="ARO Suite"></re-image>
+        <re-text font-size="16px" font-weight="bold" line-height="24px" color="#f3f2f2">
+            ARO SUITE
+        </re-text>
+    </re-header>
+    <re-main background-color="#ffffff" border-radius="0px">
+        <re-block border-radius="0px" align="left" padding="32px 32px 40px 32px" background-color="#ffffff">
+            <re-heading level="h1" align="left" color="#201e1d" font-size="24px" line-height="32px">
+                Verification code
+            </re-heading>
+            <re-text margin="16px 0px 0px 0px" align="left" font-size="15px" color="#201e1d">
+                Enter this code when {{app.name}} asks for it:
+            </re-text>
+            <re-text font-size="32px" margin="20px 0px 0px 0px" color="#2f6b47">
+                <b>{{otp_code}}</b>
+            </re-text>
+            <re-text margin="16px 0px 0px 0px" font-size="14px" color="#605d5d">
+                Do not share this code. It was requested from <b>{{requested_from}}</b> at <b>{{requested_at}}</b>.
+            </re-text>
+        </re-block>
+    </re-main>
+    <re-footer padding="24px 32px 8px">
+        <re-text margin="0px" font-size="12px" color="#7d7979">&copy; {{current_year}} {{app.name}}</re-text>
+    </re-footer>
+</re-body>
+</re-html>

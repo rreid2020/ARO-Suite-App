@@ -108,7 +108,7 @@ export const YEAR_END_GATES: EvaluatedGate[] = [
   },
   {
     id: 'conversion-agreed',
-    label: 'Opening balance conversion agreed',
+    label: 'Opening balances locked',
     kind: 'evaluated',
     check: (s) => ({ pass: s.conversionAgreed, detail: s.conversionNote }),
   },

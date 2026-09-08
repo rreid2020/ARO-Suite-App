@@ -1,10 +1,44 @@
 /** ENGINE-SPEC §9.5 — curve edges. */
 
 import { describe, expect, it } from 'vitest';
-import { Curve, curveRateDetail, curveTermOf } from '../curve';
+import { Curve, curveOptionLabel, curveRateDetail, curveSourcePoints, curveTermOf, isPublishedCurve, pointsMatch } from '../curve';
 import { linearCurve, yearCurve } from './fixtures';
 
 const empty: Curve = { ...yearCurve, id: 'c-empty', points: [] };
+
+describe('curve source points — the published tenors a lookup actually reads', () => {
+  it('highlights the exact published tenor', () => {
+    const src = curveSourcePoints(yearCurve, 5);
+    expect(src).toEqual([{ point: { term: 5, rate: 0.0440 }, role: 'source' }]);
+  });
+
+  it('step highlights the first tenor at or beyond the term', () => {
+    const src = curveSourcePoints(yearCurve, 4);
+    expect(src.map((s) => s.point.term)).toEqual([5]);
+    expect(src[0].point.rate).toBe(curveRateDetail(yearCurve, 4).rate);
+  });
+
+  it('below the first point highlights that first tenor', () => {
+    expect(curveSourcePoints(yearCurve, 0.25).map((s) => s.point.term)).toEqual([1]);
+  });
+
+  it('linear interpolation highlights both bracketing tenors', () => {
+    expect(curveSourcePoints(linearCurve, 4).map((s) => s.point.term)).toEqual([3, 5]);
+  });
+
+  it('flat-last extrapolation highlights the closing tenor', () => {
+    expect(curveSourcePoints({ ...yearCurve, extrapolation: 'flat-last' }, 15).map((s) => s.point.term)).toEqual([10]);
+  });
+
+  it('sloping extrapolation highlights the closing pair', () => {
+    expect(curveSourcePoints({ ...yearCurve, extrapolation: 'linear' }, 15).map((s) => [s.point.term, s.role]))
+      .toEqual([[7, 'bracket'], [10, 'source']]);
+  });
+
+  it('an empty curve has no source row', () => {
+    expect(curveSourcePoints(empty, 5)).toEqual([]);
+  });
+});
 
 describe('curve lookup — ENGINE-SPEC §5, §9.5', () => {
   it('below the first point, the first point rate applies', () => {
@@ -79,5 +113,27 @@ describe('curve lookup — ENGINE-SPEC §5, §9.5', () => {
     const shuffled: Curve = { ...yearCurve, points: [...yearCurve.points].reverse() };
     expect(curveRateDetail(shuffled, 5).rate).toBeCloseTo(0.0440, 12);
     expect(curveRateDetail(shuffled, 0.5).basis).toBe('below-first');
+  });
+});
+
+describe('published curve assignment labels', () => {
+  it('shows name, currency and as-at so two year-end tables are distinguishable', () => {
+    expect(curveOptionLabel({ name: 'Zero Coupon Bond Yield Curve', currency: 'CAD', asAt: '2025-03-31' }))
+      .toBe('Zero Coupon Bond Yield Curve (CAD, as at 2025-03-31)');
+    expect(curveOptionLabel({ name: 'Zero Coupon Bond Yield Curve', currency: 'CAD', asAt: '', isDraft: true }))
+      .toBe('Zero Coupon Bond Yield Curve (CAD) — draft');
+  });
+
+  it('does not treat drafts or empty shells as published', () => {
+    expect(isPublishedCurve({ points: [{ term: 1, rate: 0.03 }], isDraft: true })).toBe(false);
+    expect(isPublishedCurve({ points: [], isDraft: false })).toBe(false);
+    expect(isPublishedCurve({ points: [{ term: 1, rate: 0.03 }] })).toBe(true);
+  });
+
+  it('detects a later as-at table that still holds last year\'s rates', () => {
+    const a = { points: [{ term: 1, rate: 0.03 }, { term: 2, rate: 0.04 }] };
+    expect(pointsMatch(a, { points: [{ term: 2, rate: 0.04 }, { term: 1, rate: 0.03 }] })).toBe(true);
+    expect(pointsMatch(a, { points: [{ term: 1, rate: 0.03 }, { term: 2, rate: 0.041 }] })).toBe(false);
+    expect(pointsMatch(a, { points: [] })).toBe(false);
   });
 });

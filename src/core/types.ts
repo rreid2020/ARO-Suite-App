@@ -13,6 +13,7 @@ import { AuthorityMode, Domain, TenantKind } from './authority';
 import { AttestedGate } from './gates';
 import { CalendarType, LatePolicy, Period } from './periods';
 import { AuditEvent, ChangeEntry } from './writePath';
+import type { RecalcRegister } from './recalc';
 
 export type { CostLine, Obligation, Revision, ObligationEvent, Curve, Period };
 
@@ -38,6 +39,10 @@ export interface User {
    *  a firm admin — INVARIANTS §7. */
   isOwner?: boolean;
   lastSeen?: string;
+  /** True until they have signed in with Clerk and claimed this email. */
+  pendingInvite?: boolean;
+  /** True when Clerk currently has an active session for this user. */
+  sessionActive?: boolean;
 }
 
 /** The four modelled frameworks — README decision 2. */
@@ -67,6 +72,12 @@ export interface ReportingUnit {
   latePolicy: LatePolicy;
   status: string;
   stage: string;
+  /**
+   * When this reporting unit's own settings (framework, assumptions, curve)
+   * were confirmed. Until then, Open lands on Unit settings rather than Prepare.
+   * A unit that has already started is treated as complete even if this is empty.
+   */
+  setupCompletedAt?: string | null;
   /** Assumptions live with the unit — INVARIANTS §9. */
   inflation: number;
   contingency: number;
@@ -79,6 +90,10 @@ export interface ReportingUnit {
   materialityPct: number;
   extrapolationPolicy: string;
   dayCount: string;
+  /** US GAAP / ASPE: how a downward cost revision consumes stored layers. Default LIFO. */
+  layerPolicy?: 'LIFO' | 'FIFO' | 'Pro-rata';
+  /** PSAS: false dispenses with discounting (and then inflation). Default true. */
+  discount?: boolean;
 }
 
 export interface Account {
@@ -93,6 +108,11 @@ export interface Account {
    */
   engineRole: string;
   requiredSegments: string[];
+  /**
+   * Extra columns from the organisation's chart file, keyed by the file's
+   * own headings. Shape varies by tenant — there is no fixed coding layout.
+   */
+  columns: Record<string, string>;
 }
 
 export interface CodingSegment {
@@ -111,6 +131,66 @@ export interface PostingRule {
   debitRole: string;
   creditRole: string;
   engineEmitted: boolean;
+}
+
+/**
+ * A named mapping of engine roles onto imported GLs. One organisation can
+ * hold several (wells vs plant) because their chart often has more than one
+ * provision and more than one retirement-cost asset.
+ */
+export interface PostingScenario {
+  id: string;
+  tenantId: string;
+  name: string;
+  isDefault: boolean;
+  /** engineRole → account id from the imported chart. */
+  accounts: Record<string, string>;
+  /** Engine roles the user has marked complete on this scenario. Survives leaving the step. */
+  completedRoles: string[];
+}
+
+/** Organisation asset class. Each class has its own posting scenario. */
+export interface AroAssetClass {
+  id: string;
+  tenantId: string;
+  /** Organisation class code (ANLKL / asset class code). Empty when the class is name-only. */
+  code?: string;
+  name: string;
+  scenarioId: string;
+}
+
+/** Scope of a row on the master TCA listing. Completeness is at asset level. */
+export type TcaScope = 'In scope' | 'Scoped out' | 'Undecided';
+
+/** Operational status of a tangible capital asset. */
+export type TcaAssetStatus = 'Active' | 'Unproductive' | 'Disposed';
+
+/**
+ * One row on the master tangible-capital-asset listing. Obligation `assetId`
+ * is the TCA asset number and matches `assetNumber`. `aroAssetNumber` on the
+ * obligation is the retirement-cost asset identifier, a different number.
+ */
+export interface TcaAsset {
+  id: string;
+  assetNumber: string;
+  description: string;
+  assetClass: string;
+  acquisitionDate: string;
+  site: string;
+  /** Gross acquisition / capitalized cost of the TCA. */
+  acquisitionCost: number | null;
+  /** Accumulated amortization of the TCA (not the ARO asset). */
+  accumAmort: number | null;
+  /** Total useful life of the TCA, in years. Defaults the ARO asset Total UL on a new obligation. */
+  totalUl: number | null;
+  /** Life already consumed on the TCA, in years. Defaults the ARO asset Expired UL on a new obligation. */
+  expiredUl: number | null;
+  /** Active until marked Unproductive or Disposed. Independent of ARO-asset inProductiveUse. */
+  assetStatus: TcaAssetStatus;
+  scope: TcaScope;
+  scopeReason: string;
+  /** Extra file columns, keyed by the organisation's own headings. */
+  columns: Record<string, string>;
 }
 
 export interface Extract {
@@ -207,10 +287,30 @@ export interface Settlement {
   actualCost: number;
   settledOn: string;
   posted: boolean;
+  /** Take the retirement-cost asset off the books after a full settlement. */
+  disposeAroAsset?: boolean;
+  /** Related TCA sold — extinguish the provision; skip restoration spend. */
+  relatedAssetSold?: boolean;
+}
+
+/**
+ * Conversion listings frozen when opening balances are locked. Go-forward
+ * TCA loads write `tcaAssets` and must not mutate this snapshot.
+ */
+export interface OpeningSnapshot {
+  tcaAssets: TcaAsset[];
+  obligationIds: string[];
+  lockedAt: string;
+  /** Asset-number keys present on the latest go-forward TCA file. */
+  tcaFileKeys?: string[];
 }
 
 /** Everything held for one reporting unit. */
 export interface UnitData {
+  /** Current master TCA / PPE listing. Linked to obligations by asset number. */
+  tcaAssets: TcaAsset[];
+  /** Frozen conversion TCA listing and obligation ids. Set on lock. */
+  openingSnapshot?: OpeningSnapshot | null;
   obligations: Obligation[];
   events: ObligationEvent[];
   extracts: Extract[];
@@ -222,17 +322,85 @@ export interface UnitData {
   signatures: Signature[];
   periods: Period[];
   attestedGates: AttestedGate[];
-  /** GL balance received for the reconciliation. null = not received. */
+  /** Year-end GL provision balance for close recon. null = not received. */
   glTotal: number | null;
+  /** Opening trial-balance totals. The TB is not per obligation. */
+  openingGlProvision: number | null;
+  openingGlArc: number | null;
+  /** Opening GL gross retirement-cost-asset (acquisition cost) and accum. NBV is cost minus accum. */
+  openingGlAroCost: number | null;
+  openingGlAroAccum: number | null;
+  /** Opening GL totals for the master TCA listing recon. */
+  openingGlTcaCost: number | null;
+  openingGlTcaAccum: number | null;
   conversionAgreed: boolean;
   noteGenerated: boolean;
   yearLocked: boolean;
+  /**
+   * Mode 1 — the independent recalculation against the source system's own
+   * figures. It sits alongside the obligations rather than inside them: the
+   * register is what the *extracts* said, and the obligations are what this
+   * unit measures. Reconciling the two is the product.
+   */
+  recalc: RecalcRegister;
+}
+
+export type SetupStepId =
+  | 'users'
+  | 'authority'
+  | 'frameworks'
+  | 'defaults'
+  | 'estimates'
+  | 'curve'
+  | 'unit';
+
+/** Persisted tenant onboarding — resumable across sessions. */
+export interface TenantSetup {
+  /** Last step the user was working on. */
+  current: SetupStepId;
+  savedAt: string;
+  /** Accepting the measurement defaults is the only step that cannot be inferred from data. */
+  defaultsConfirmedAt: string | null;
+  completedAt: string | null;
+}
+
+export type EstimateColumnKind = 'text' | 'number' | 'percent' | 'currency';
+export type EstimateColumnRole = 'label' | 'factor';
+
+/** A template (or one-off estimate) column. Factors multiply into line amount. */
+export interface EstimateColumn {
+  id: string;
+  label: string;
+  kind: EstimateColumnKind;
+  role: EstimateColumnRole;
+}
+
+export interface CostEstimateTemplateLine {
+  description: string;
+  qty: number;
+  /** Blank at use when omitted. */
+  rate: number | null;
+  /** Values for custom columns, keyed by column id. */
+  extra?: Record<string, string>;
+}
+
+/** Tenant-owned cost build-up reused when posting a new ARO. */
+export interface CostEstimateTemplate {
+  id: string;
+  tenantId: string;
+  name: string;
+  /** When omitted, description / qty / unit rate. */
+  columns?: EstimateColumn[];
+  lines: CostEstimateTemplateLine[];
 }
 
 export interface TenantSettings {
   accounts: Account[];
   segments: CodingSegment[];
   postingRules: PostingRule[];
+  postingScenarios: PostingScenario[];
+  aroAssetClasses: AroAssetClass[];
+  costEstimateTemplates?: CostEstimateTemplate[];
   frameworks: Framework[];
   /** Step defaults applied to a new reporting unit. */
   defaults: {
@@ -241,7 +409,11 @@ export interface TenantSettings {
     dayCount: string;
     termConvention: string;
     calendarType: CalendarType;
+    /** Framework copied onto a new reporting unit. Policy axes stay engine vocabulary. */
+    frameworkId: string;
   };
+  /** Company setup progress. Absent on tenants that predate the wizard — derived from live data. */
+  setup?: TenantSetup | null;
   retentionYears: number;
   legalHold: boolean;
   sso: boolean;

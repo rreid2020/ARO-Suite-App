@@ -32,6 +32,8 @@ export interface Repository {
   size(): number;
   /** Server-side mut() — HTTP repository only. */
   commitWrite?<T>(req: WriteRequest<T>): Promise<WriteResult<T>>;
+  inviteUser?(tenantId: string, body: { name: string; email: string; role: string }): Promise<{ message: string; state: AppState }>;
+  removeUser?(tenantId: string, userId: string): Promise<{ message: string; state: AppState }>;
 }
 
 const KEY = 'aro-suite/state/v1';

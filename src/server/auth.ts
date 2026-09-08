@@ -1,7 +1,9 @@
-import { createClerkClient, verifyToken } from '@clerk/backend';
+import { verifyToken } from '@clerk/backend';
 import { HTTPException } from 'hono/http-exception';
 import type { AppUser, Membership } from '@prisma/client';
+import { clerk } from './clerk';
 import { prisma } from './db';
+import { resolveAppUser } from './identity';
 
 export interface Authed {
   clerkUserId: string;
@@ -10,12 +12,6 @@ export interface Authed {
   appUser: AppUser;
   memberships: (Membership & { tenantId: string })[];
   tenantIds: string[];
-}
-
-function clerk() {
-  const key = process.env.CLERK_SECRET_KEY;
-  if (!key) throw new Error('CLERK_SECRET_KEY is not set');
-  return createClerkClient({ secretKey: key });
 }
 
 export async function authenticate(authorization: string | undefined): Promise<Authed> {
@@ -39,11 +35,7 @@ export async function authenticate(authorization: string | undefined): Promise<A
   const email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? '';
   const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || email || 'User';
 
-  const appUser = await prisma.appUser.upsert({
-    where: { clerkUserId },
-    create: { clerkUserId, name, email },
-    update: { name, email },
-  });
+  const appUser = await resolveAppUser(prisma, { clerkUserId, name, email });
 
   const memberships = await prisma.membership.findMany({ where: { userId: appUser.id } });
   return {

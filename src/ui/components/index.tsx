@@ -1,35 +1,40 @@
 /**
  * Recurring components — SCREENS.md, "Layout pattern".
  *
- * The prerequisites panel, the return banner, the calculation ladder, basis tags
- * and field help. One renderer each: the ladder in particular is used in three
- * places and must not fork.
+ * The prerequisites panel, the return banner, basis tags and field help.
  */
 
 import React, { useState } from 'react';
-import { Rung } from '../../engine/ladder';
+import { num, parseNumber } from '../../core/format';
+import {
+  evaluateNewAroLifeDraft, expiredUlFromAcquisition, tcaUlText, type NewObligationUlIssue,
+} from '../../core/usefulLife';
+import { TERM_CONVENTIONS } from '../../engine/curve';
+import { DAY_COUNTS } from '../../engine/dates';
 
-/* ── formatting ─────────────────────────────────────────────────────────── */
-
-export const money = (n: number | null | undefined, dp = 0) =>
-  n === null || n === undefined || !Number.isFinite(n)
-    ? '—'
-    : n.toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
-
-export const money2 = (n: number | null | undefined) => money(n, 2);
-export const pct = (n: number, dp = 2) => `${(n * 100).toFixed(dp)}%`;
-export const years = (n: number) => `${n.toFixed(4)} yr`;
+export { SheetTable, SheetTh, SheetStatus, useSheet } from './Sheet';
+export type { SheetColumn } from './Sheet';
+export { AccountPicker } from './AccountPicker';
+export {
+  NewAroEstimate,
+  DEFAULT_ESTIMATE_COLUMNS,
+  emptyEstimateLine,
+  estimateHasCost,
+  estimatePayload,
+} from './NewAroEstimate';
+export type { EstimateLineDraft, EstimateMode } from './NewAroEstimate';
+export { currency, money, money2, num, parseNumber, pct, years } from '../../core/format';
 
 /* ── layout ─────────────────────────────────────────────────────────────── */
 
 export function Block({
-  title, kicker, actions, children, note,
+  title, kicker, actions, children, note, className,
 }: {
   title?: string; kicker?: string; actions?: React.ReactNode;
-  children: React.ReactNode; note?: string;
+  children: React.ReactNode; note?: string; className?: string;
 }) {
   return (
-    <section className="block">
+    <section className={['block', className].filter(Boolean).join(' ')}>
       {(title || actions || kicker) && (
         <header style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap', marginBottom: 12 }}>
           <div style={{ marginRight: 'auto', minWidth: 0 }}>
@@ -94,8 +99,8 @@ export function Dot({ tone }: { tone: 'ok' | 'warn' | 'bad' | 'idle' }) {
  * explanation under the input)" — SCREENS.md.
  */
 export function Field({
-  label, help, children, hint,
-}: { label: string; help?: string; children: React.ReactNode; hint?: string }) {
+  label, help, children, hint, hintTone,
+}: { label: string; help?: string; children: React.ReactNode; hint?: string; hintTone?: 'ok' | 'warn' | 'bad' }) {
   const [pinned, setPinned] = useState(false);
   return (
     <div className="field">
@@ -118,13 +123,173 @@ export function Field({
         )}
       </label>
       {children}
-      {hint && <div style={{ marginTop: 4, fontSize: 11 }} className="muted">{hint}</div>}
+      {hint && (
+        <div
+          style={{ marginTop: 4, fontSize: 11, color: hintTone ? `var(--${hintTone})` : undefined }}
+          className={hintTone ? undefined : 'muted'}
+        >
+          {hint}
+        </div>
+      )}
       {pinned && help && (
         <div style={{ marginTop: 6, padding: '9px 11px', background: 'var(--color-surface)', fontSize: 11.5, lineHeight: 1.5, textWrap: 'pretty' }}>
           {help}
         </div>
       )}
     </div>
+  );
+}
+
+function listingUlHint(
+  form: string,
+  listed: number | null | undefined,
+  noun: string,
+  empty?: string,
+): string | undefined {
+  const listedText = tcaUlText(listed);
+  if (!listedText && !form.trim()) return empty;
+  if (listedText && form.trim() === listedText) {
+    return `Defaulted from the TCA ${noun} (${listedText} yr). Change if the ARO asset life differs.`;
+  }
+  if (listedText && form.trim() !== listedText) {
+    return `TCA ${noun} on the listing is ${listedText} yr.`;
+  }
+  return undefined;
+}
+
+function ulFieldHint(issue: NewObligationUlIssue | null, field: NewObligationUlIssue['field'], fallback?: string) {
+  if (issue?.field === field) return { hint: issue.message, hintTone: 'bad' as const };
+  return { hint: fallback, hintTone: undefined };
+}
+
+export function NewAroLifeFields({
+  totalUl, expiredUl, tca, assetAcquisitionDate, costEstimateDate, settlementDate, dayCount,
+  onTotalUl, onExpiredUl,
+}: {
+  totalUl: string;
+  expiredUl: string;
+  tca?: { totalUl?: number | null; expiredUl?: number | null } | null;
+  assetAcquisitionDate: string;
+  costEstimateDate: string;
+  settlementDate: string;
+  dayCount: string;
+  onTotalUl: (value: string) => void;
+  onExpiredUl: (value: string) => void;
+}) {
+  const life = evaluateNewAroLifeDraft({
+    totalUlText: totalUl,
+    expiredUlText: expiredUl,
+    tca,
+    assetAcquisitionDate,
+    costEstimateDate,
+    settlementDate,
+    dayCount,
+  });
+  const listingTotal = typeof tca?.totalUl === 'number' ? tca.totalUl : null;
+  const listingExpired = typeof tca?.expiredUl === 'number' ? tca.expiredUl : null;
+  const proposedExpired = expiredUlFromAcquisition(
+    assetAcquisitionDate, costEstimateDate, life.totalUl, dayCount,
+  );
+  const totalHint = ulFieldHint(
+    life.issue, 'totalUl',
+    listingUlHint(totalUl, listingTotal, 'Total UL', 'No Total UL on the master TCA listing. Enter the ARO asset useful life in years.'),
+  );
+  const expiredFallback = expiredUl.trim() === '' && listingExpired == null && proposedExpired != null
+    ? `From the obligating event to the cost estimate date: ${num(proposedExpired)} years already consumed.`
+    : listingUlHint(expiredUl, listingExpired, 'Expired UL');
+  const expiredHint = ulFieldHint(life.issue, 'expiredUl', expiredFallback);
+  const remainingHint = life.remainingUl != null
+    ? 'Total UL minus Expired UL. Expected settlement must leave at least this many years.'
+    : undefined;
+  const settlementFallback = life.remainingUl != null
+    ? `Must be at least remaining UL (${num(life.remainingUl)} yr).`
+    : undefined;
+  const settlementHint = ulFieldHint(life.issue, 'settlement', settlementFallback);
+
+  return (
+    <>
+      <Field
+        label="Total UL"
+        help="Years. Defaults from the linked TCA on the master listing. Remaining UL falls as amortization is posted."
+        hint={totalHint.hint}
+        hintTone={totalHint.hintTone}
+      >
+        <input
+          className="input num"
+          value={totalUl}
+          onChange={(e) => onTotalUl(e.target.value)}
+          onBlur={() => {
+            const n = parseNumber(totalUl);
+            if (Number.isFinite(n)) onTotalUl(num(n));
+          }}
+        />
+      </Field>
+      <Field
+        label="Expired UL"
+        help="Years already consumed when this obligation is recognised. Catch-up amortization uses this over total UL. Defaults from the linked TCA. Leave blank to measure from the ARO asset acquisition date (obligating event) to the cost estimate date when the listing has no Expired UL."
+        hint={expiredHint.hint}
+        hintTone={expiredHint.hintTone}
+      >
+        <input
+          className="input num"
+          value={expiredUl}
+          onChange={(e) => onExpiredUl(e.target.value)}
+          onBlur={() => {
+            const n = parseNumber(expiredUl);
+            if (Number.isFinite(n)) onExpiredUl(num(n));
+          }}
+        />
+      </Field>
+      <Field
+        label="Remaining UL"
+        help="Total UL minus Expired UL of the ARO asset. Years to settlement must be at least this remaining life."
+        hint={remainingHint}
+      >
+        <input className="input num" value={life.remainingUl == null ? '' : num(life.remainingUl)} readOnly />
+      </Field>
+      <Field
+        label="Years to settlement"
+        help="From the cost estimate date to expected settlement. Must be equal to or greater than remaining UL."
+        hint={settlementHint.hint}
+        hintTone={settlementHint.hintTone}
+      >
+        <input className="input num" value={life.yearsToSettlement == null ? '' : num(life.yearsToSettlement)} readOnly />
+      </Field>
+    </>
+  );
+}
+
+/** Selectable day-count and settlement-term conventions. */
+export function ConventionSelects({
+  dayCount, termConvention, disabled, onDayCount, onTermConvention,
+}: {
+  dayCount: string;
+  termConvention: string;
+  disabled?: boolean;
+  onDayCount: (value: string) => void;
+  onTermConvention: (value: string) => void;
+}) {
+  return (
+    <>
+      <Field
+        label="Day count convention"
+        help="How a term in years is measured between two dates. 30/360 US matches Excel DAYS360(..., FALSE) and is the default. 30E/360 is the European method (DAYS360 TRUE). Actual/365, Actual/360 and Actual/Actual count calendar days."
+      >
+        <select className="input" name="dayCount" value={dayCount} disabled={disabled}
+          onChange={(e) => onDayCount(e.target.value)}>
+          {DAY_COUNTS.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </Field>
+      <Field
+        label="Settlement term rounding"
+        help="How the discount term is read against the published curve. Round up to whole year (SAP) is the default. Round up to the next curve point takes the first published tenor at or beyond the term. Exact fractional years uses the unrounded term."
+      >
+        <select className="input" name="termConvention" value={termConvention} disabled={disabled}
+          onChange={(e) => onTermConvention(e.target.value)}>
+          {TERM_CONVENTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </Field>
+    </>
   );
 }
 
@@ -163,57 +328,6 @@ export function Prereqs({ items }: { items: Prereq[] }) {
         ))}
       </div>
     </Block>
-  );
-}
-
-/* ── the calculation ladder ─────────────────────────────────────────────── */
-
-/**
- * One renderer, used in three places, collapsed by default. Each rung carries
- * its operator, its basis tag and its Excel formula.
- */
-export function Ladder({ rungs, open: openInit = false }: { rungs: Rung[]; open?: boolean }) {
-  const [open, setOpen] = useState(openInit);
-  const [formulas, setFormulas] = useState(false);
-
-  const fmt = (r: Rung) =>
-    r.kind === 'money' ? money2(r.value) : r.kind === 'rate' ? pct(r.value, 4) : years(r.value);
-
-  return (
-    <div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className="btn btn-secondary btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-          {open ? 'Hide' : 'Show'} calculation ladder
-        </button>
-        {open && (
-          <button className="btn btn-ghost btn-sm" onClick={() => setFormulas((f) => !f)}>
-            {formulas ? 'Hide' : 'Show'} Excel formulas
-          </button>
-        )}
-      </div>
-      {open && (
-        <div style={{ marginTop: 12 }}>
-          {rungs.map((r) => (
-            <div className="rung" key={r.key}>
-              <div>
-                <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 12.5 }}>
-                  {r.label}
-                  {r.basis && <Basis tag={r.basis} />}
-                </div>
-                <div className="rung-op muted">{r.operator}</div>
-                {r.note && (
-                  <div style={{ marginTop: 5, padding: '7px 10px', background: 'var(--color-surface)', borderLeft: '3px solid var(--color-accent)', fontSize: 11, lineHeight: 1.5, textWrap: 'pretty' }}>
-                    {r.note}
-                  </div>
-                )}
-              </div>
-              <div className="rung-val">{fmt(r)}</div>
-              {formulas && r.formula && <div className="rung-formula">{r.formula}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
