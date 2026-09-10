@@ -17,6 +17,8 @@ describe('reporting-unit navigation', () => {
     expect(resolveUnitScreen('adjust')).toBe('transactions');
     expect(resolveUnitScreen('settle')).toBe('transactions');
     expect(resolveUnitScreen('arc')).toBe('register');
+    expect(stepsFor('Reporting entity').find((s) => s.id === 'register')?.purpose).toMatch(/calculation-details/);
+    expect(stepsFor('Reporting entity').find((s) => s.id === 'transactions')?.purpose).toMatch(/expanded ARO register row/);
   });
 
   it('does not keep a Close settlements step — settlements post on Transactions', () => {

@@ -12,8 +12,10 @@
  *
  * The default set is posted books as at a chosen fiscal year and period.
  * Opening is the prior-year closing. In-year columns are event-ledger amounts
- * through that period. Post new obligations, adjustments and settlements on
- * Transactions. Journal batches package those amounts for the GL.
+ * through that period. Post a new obligation from this page, or open a row to
+ * post a cost or term adjustment or a settlement. Open a calculation-details
+ * line for the events in that total. Transactions remains the whole-period
+ * posting step. Journal batches package those amounts for the GL.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -35,6 +37,7 @@ import { SheetFilter } from '../sheet';
 import { download, S } from '../../xlsx/write';
 import { groupToneClass } from '../groupTone';
 import { ObligationExpand } from './measure';
+import { NewObligationForm } from './transactions';
 
 type ColKind = 'text' | 'number' | 'date' | 'select' | 'derived';
 type ColGroup = 'Identity' | 'Asset' | 'TCA' | 'Opening' | 'Existing' | 'New' | 'Closing' | 'ARO asset' | 'Dates' | 'Calculated' | 'Movement' | 'Source';
@@ -157,6 +160,7 @@ export function Register() {
   const [bulk, setBulk] = useState<{ key: string; value: string } | null>(null);
   const [pasteReport, setPasteReport] = useState<string[] | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [newAroOpen, setNewAroOpen] = useState(false);
   const open = openPeriod(data ?? { periods: [] });
   const gridRef = useRef<HTMLTableElement>(null);
 
@@ -599,17 +603,37 @@ export function Register() {
         </Block>
         )}
 
+      {editable && newAroOpen && (
+        <Block
+          kicker="Transactions"
+          title="New obligation and ARO asset"
+          note={open
+            ? `Posts into ${open.code} (${open.starts} to ${open.ends}). Cost, term and settlement on an existing obligation are on that row — open it and use the Transactions tabs.`
+            : 'Open a period on Periods & close before posting a new obligation.'}
+          actions={<button type="button" className="btn btn-secondary btn-sm" onClick={() => setNewAroOpen(false)}>Cancel</button>}
+        >
+          {open
+            ? <NewObligationForm />
+            : <p className="muted" style={{ margin: 0 }}>Open a period on Periods & close before posting.</p>}
+        </Block>
+      )}
+
       <Block
         kicker="Register"
         title={`${filtered.length} obligation${filtered.length === 1 ? '' : 's'}`}
         note={asAt
-          ? `As at ${asAt.code} (${asAt.starts} to ${asAt.ends}). Opening is the prior fiscal year's closing, or the conversion opening in the first year. Existing and new columns are event-ledger amounts through this period. Post new obligations, adjustments and settlements on Transactions. Accretion and amortization follow month-end allocation. A period with no new postings carries the prior period's closing forward.`
+          ? `As at ${asAt.code} (${asAt.starts} to ${asAt.ends}). Opening is the prior fiscal year's closing, or the conversion opening in the first year. Existing and new columns are event-ledger amounts through this period. Post a new obligation here, or open a row for a cost adjustment, term adjustment or settlement. The Transactions step lists every posting in the open period. Accretion and amortization follow month-end allocation.`
           : 'Generate a fiscal calendar on Periods & close to view posted books as at a period.'}
         actions={
           <>
             {editable && (
-              <button className="btn btn-primary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'new', sub: '' })}>
-                Record a transaction
+              <button className="btn btn-primary btn-sm" onClick={() => setNewAroOpen((v) => !v)}>
+                {newAroOpen ? 'Close new obligation' : 'New obligation'}
+              </button>
+            )}
+            {editable && (
+              <button className="btn btn-secondary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'new', sub: '' })}>
+                Transactions
               </button>
             )}
             <button className="btn btn-secondary btn-sm" onClick={exportXlsx}>Export to Excel</button>
@@ -853,7 +877,7 @@ export function Register() {
           <button className="btn btn-secondary btn-sm" disabled={page >= pages - 1} onClick={() => setPage((p) => p + 1)}>Next</button>
           <SheetStatus sheet={sheet} noun="obligations" />
           <span className="muted" style={{ marginLeft: 'auto' }}>
-            Derived cells are tinted. Posted books follow the event ledger through the selected period. Open a row for monthly schedules, calculation details and adjustments. Paste a block from Excel into any editable cell.
+            Derived cells are tinted. Posted books follow the event ledger through the selected period. Open a row for schedules, calculation details, and to post a cost or term adjustment or a settlement. Open a calculation-details line to see the events in that total. Paste a block from Excel into any editable cell.
           </span>
         </div>
       </Block>

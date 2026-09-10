@@ -65,7 +65,7 @@ function conversionArc(o: Obligation, events: ObligationEvent[]): number {
   return round2(o.openingArc);
 }
 
-function inYearEvents(
+export function inYearEvents(
   o: Obligation,
   events: ObligationEvent[],
   periods: Period[],

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assetCalcLines, obligationCalcLines } from '../calcDetails';
+import { assetCalcLines, calcLineDrillable, calcLineSource, obligationCalcLines } from '../calcDetails';
 import { registerBooks } from '../registerBooks';
 import { usefulLifeAsAt } from '../usefulLife';
 import type { JournalBatch, Obligation, ReportingUnit } from '../types';
@@ -135,5 +135,48 @@ describe('assetCalcLines', () => {
     expect(byKey.additions.amount).toBe(613_207.27);
     expect(byKey.amort.amount).toBe(0);
     expect(byKey.closing.amount).toBe(613_207.27);
+  });
+});
+
+describe('calcLineSource', () => {
+  it('lists the addition and accretion events under New ARO and Accretion on new ARO', () => {
+    const row = o({ id: 'n1', openingArc: undefined });
+    const events = [
+      ev({ id: 'add', obligationId: 'n1', type: 'addition', amount: 613_207.27 }),
+      ev({ id: 'accr', obligationId: 'n1', type: 'accretion', amount: 1_948.17 }),
+    ];
+    const books = registerBooks(row, events, [p1], [], p1);
+    expect(calcLineSource('newAro', 'obligation', row, books, events, [p1], p1).events.map((e) => e.id)).toEqual(['add']);
+    expect(calcLineSource('accretion', 'obligation', row, books, events, [p1], p1).events).toEqual([]);
+    expect(calcLineSource('accretionNew', 'obligation', row, books, events, [p1], p1).events.map((e) => e.id)).toEqual(['accr']);
+    expect(calcLineSource('additions', 'asset', row, books, events, [p1], p1).events.map((e) => e.id)).toEqual(['add']);
+  });
+
+  it('puts existing-ARO accretion on the existing line, not the new line', () => {
+    const row = o();
+    const events = [
+      ev({ id: 'open', type: 'opening', amount: 1_000 }),
+      ev({ id: 'accr', type: 'accretion', amount: 10 }),
+    ];
+    const books = registerBooks(row, events, [p1], [], p1);
+    expect(calcLineSource('opening', 'obligation', row, books, events, [p1], p1).events.map((e) => e.id)).toEqual(['open']);
+    expect(calcLineSource('accretion', 'obligation', row, books, events, [p1], p1).events.map((e) => e.id)).toEqual(['accr']);
+    expect(calcLineSource('accretionNew', 'obligation', row, books, events, [p1], p1).events).toEqual([]);
+  });
+
+  it('lets every calculation-details line open, with a note when there are no events', () => {
+    const row = o();
+    const events = [ev({ id: 'open', type: 'opening', amount: 1_000 })];
+    const books = registerBooks(row, events, [p1], [], p1);
+    const d = { cce: 1_020_000, tD: 14, settlementUsed: '2041-03-31' } as Derived;
+    const life = usefulLifeAsAt(row, events, [p1], unit, p1);
+    for (const line of obligationCalcLines(row, books, d, unit)) {
+      expect(calcLineDrillable(line), line.key).toBe(true);
+    }
+    for (const line of assetCalcLines(row, books, life)) {
+      expect(calcLineDrillable(line), line.key).toBe(true);
+    }
+    expect(calcLineSource('currentCost', 'obligation', row, books, events, [p1], p1).emptyNote).toMatch(/measurement fact/);
+    expect(calcLineSource('accretionNew', 'obligation', row, books, events, [p1], p1).emptyNote).toMatch(/existed at opening/);
   });
 });

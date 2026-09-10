@@ -1,6 +1,7 @@
 /**
  * Measure phase — obligation expand on the register, layers and framework,
- * event ledger. Cost, term and settlement posting lives on Transactions.
+ * event ledger. Cost, term and settlement posting can run on the expanded
+ * register row; Transactions remains the standalone posting step.
  */
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -17,13 +18,16 @@ import { frameworkPolicy, unitDiscounts } from '../../engine/framework';
 import { openPeriod, remainingDiscountTerm } from '../../core/periodClose';
 import { unitCurve } from '../../core/measure';
 import { registerBooks } from '../../core/registerBooks';
-import { assetCalcLines, obligationCalcLines, type CalcDetailLine } from '../../core/calcDetails';
+import { assetCalcLines, calcLineDrillable, calcLineSource, obligationCalcLines, type CalcDetailLine } from '../../core/calcDetails';
 import { accretionSchedule, amortizationSchedule, type ScheduleRow } from '../../core/schedules';
 import { applyUlAlignment, dismissUlAlignment, formatUl, ulAlignmentOf, ulAlignmentPending, usefulLifeAsAt } from '../../core/usefulLife';
 import { Block, Empty, Field, currency, num, pct, SheetTable, Tag } from '../components';
 import { groupToneClass } from '../groupTone';
+import { RevisionForm, SettlementForm } from './transactions';
+import type { ObligationEvent } from '../../engine/rollforward';
+import type { Period } from '../../core/periods';
 
-type ExpandTab = 'accretion' | 'curve' | 'obligation-calc' | 'adjustments' | 'amortization' | 'asset-calc';
+type ExpandTab = 'accretion' | 'curve' | 'obligation-calc' | 'adjustments' | 'amortization' | 'asset-calc' | 'tx-cost' | 'tx-term' | 'tx-settle';
 
 const OBLIGATION_TABS: { id: ExpandTab; label: string }[] = [
   { id: 'accretion', label: 'Monthly accretion schedule' },
@@ -37,6 +41,12 @@ const ASSET_TABS: { id: ExpandTab; label: string }[] = [
   { id: 'asset-calc', label: 'ARO asset calculation details' },
 ];
 
+const TX_TABS: { id: ExpandTab; label: string }[] = [
+  { id: 'tx-cost', label: 'Cost adjustment' },
+  { id: 'tx-term', label: 'Term adjustment' },
+  { id: 'tx-settle', label: 'Settlement' },
+];
+
 /** Expand panel under a register row. */
 export function ObligationExpand({
   obligation, fiscalYear, asAtPeriodId,
@@ -45,7 +55,7 @@ export function ObligationExpand({
   fiscalYear: number;
   asAtPeriodId?: string;
 }) {
-  const { state, ui, apply, setUi } = useStore();
+  const { state, ui, apply } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const derived = useDerived()!;
@@ -107,6 +117,15 @@ export function ObligationExpand({
             ))}
           </div>
         </div>
+        <div className="register-tab-group g-tone g-existing">
+          <div className="kicker">Transactions</div>
+          <div className="register-tabs">
+            {TX_TABS.map((t) => (
+              <button key={t.id} type="button" className={`register-tab${tab === t.id ? ' is-on' : ''}`}
+                onClick={() => setTab(t.id)}>{t.label}</button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {ulAlignmentPending(picked) && ulFlag && (
@@ -156,10 +175,16 @@ export function ObligationExpand({
             <DetailTable
               kicker="Obligation"
               title="Baseline and in-year movement"
-              note="Initial cost is the estimate as recorded. Current-year dollars escalate that estimate to the year end. Terms are from the year end to the original and adjusted settlement dates. Opening, existing activity, new ARO and accretion on new ARO follow the event ledger through the selected period — the same split and colours as the register."
+              note="Initial cost is the estimate as recorded. Current-year dollars escalate that estimate to the year end. Terms are from the year end to the original and adjusted settlement dates. Open a movement row to see the posted events that make up the total. Post a cost or term adjustment or a settlement from Transactions on this row."
               rows={obligationCalcLines(picked, books, d, unit)}
               currency={unit.currency}
               calendar={unit.calendarType}
+              side="obligation"
+              obligation={picked}
+              books={books}
+              events={data.events}
+              periods={data.periods}
+              asAt={asAt}
             />
           )
           : <Empty>Generate a fiscal calendar on Periods & close to see this calculation.</Empty>
@@ -169,13 +194,13 @@ export function ObligationExpand({
         <>
           <Block kicker="Revisions" title={`${picked.adj.length} revision${picked.adj.length === 1 ? '' : 's'}`}
             note={picked.inProductiveUse === false
-              ? 'History of cost and term adjustments already posted. Record the next one on Transactions. Because this ARO asset is flagged not in productive use, future changes of estimate adjust the provision against operating expense instead of the ARO asset. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'
-              : 'History of cost and term adjustments already posted. Record the next one on Transactions. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'}
+              ? 'History of cost and term adjustments already posted. Record the next one under Transactions on this row. Because this ARO asset is flagged not in productive use, future changes of estimate adjust the provision against operating expense instead of the ARO asset. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'
+              : 'History of cost and term adjustments already posted. Record the next one under Transactions on this row. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'}
             actions={editable ? (
               <>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'cost', sub: picked.id })}>Cost adjustment</button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'term', sub: picked.id })}>Term adjustment</button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'settle', sub: picked.id })}>Settlement</button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => setTab('tx-cost')}>Cost adjustment</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTab('tx-term')}>Term adjustment</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTab('tx-settle')}>Settlement</button>
               </>
             ) : undefined}>
             {picked.adj.length === 0 ? (
@@ -209,13 +234,29 @@ export function ObligationExpand({
             <DetailTable
               kicker="ARO asset"
               title="Useful life and in-year movement"
-              note="Useful life is shown in years and months. Opening, additions, amortization and closing are the same ARO asset columns as the register as at the selected period. Additions are the capitalized new ARO and revisions. Amortization appears after month-end allocation."
+              note="Useful life is shown in years and months. Opening, additions, amortization and closing are the same ARO asset columns as the register as at the selected period. Open a movement row to see the posted events that make up the total. Additions are the capitalized new ARO and revisions. Amortization appears after month-end allocation."
               rows={assetCalcLines(picked, books, life)}
               currency={unit.currency}
               calendar={unit.calendarType}
+              side="asset"
+              obligation={picked}
+              books={books}
+              events={data.events}
+              periods={data.periods}
+              asAt={asAt}
             />
           )
           : <Empty>Generate a fiscal calendar on Periods & close to see this calculation.</Empty>
+      )}
+
+      {(tab === 'tx-cost' || tab === 'tx-term' || tab === 'tx-settle') && (
+        !open
+          ? <Empty>Open a period on Periods & close before posting in-year transactions.</Empty>
+          : !editable
+            ? <Empty>This role cannot post in-year transactions.</Empty>
+            : tab === 'tx-settle'
+              ? <SettlementForm lockObligationId={picked.id} embedded />
+              : <RevisionForm kind={tab === 'tx-cost' ? 'cost' : 'term'} lockObligationId={picked.id} embedded />
       )}
     </div>
   );
@@ -223,6 +264,7 @@ export function ObligationExpand({
 
 function DetailTable({
   kicker, title, note, rows, currency: code, calendar,
+  side, obligation, books, events, periods, asAt,
 }: {
   kicker: string;
   title: string;
@@ -230,7 +272,15 @@ function DetailTable({
   rows: CalcDetailLine[];
   currency: string;
   calendar: string;
+  side: 'obligation' | 'asset';
+  obligation: Obligation;
+  books: NonNullable<ReturnType<typeof registerBooks>>;
+  events: ObligationEvent[];
+  periods: Period[];
+  asAt: Period;
 }) {
+  const [openKey, setOpenKey] = useState<string | null>(null);
+
   return (
     <Block kicker={kicker} title={title} note={note}>
       <SheetTable
@@ -238,6 +288,85 @@ function DetailTable({
         rowKey={(l) => l.key}
         noun="lines"
         rowClassName={(l) => groupToneClass(l.group)}
+        leading={{
+          width: 56,
+          header: '',
+          cell: (l) => (
+            <button type="button" className="btn btn-ghost btn-sm"
+              aria-expanded={openKey === l.key}
+              aria-label={`${openKey === l.key ? 'Hide' : 'Show'} what makes up ${l.label}`}
+              onClick={() => setOpenKey(openKey === l.key ? null : l.key)}>
+              {openKey === l.key ? 'Close' : 'Open'}
+            </button>
+          ),
+        }}
+        expand={(l) => {
+          if (openKey !== l.key || !calcLineDrillable(l)) return false;
+          if (l.key === 'initialCost') {
+            if (!obligation.lines.length) {
+              return <Empty>No cost-estimate lines on this obligation. The amount is the recorded estimate.</Empty>;
+            }
+            return (
+              <SheetTable
+                rows={obligation.lines}
+                rowKey={(line) => line.id}
+                noun="estimate lines"
+                footer={
+                  <tr>
+                    <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Total</td>
+                    <td />
+                    <td />
+                    <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>
+                      {currency(obligation.lines.reduce((s, line) => s + line.qty * line.rate, 0), code)}
+                    </td>
+                  </tr>
+                }
+                columns={[
+                  { key: 'desc', header: 'Line', value: (line) => line.description, cell: (line) => line.description },
+                  { key: 'qty', header: 'Qty', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (line) => line.qty, cell: (line) => num(line.qty) },
+                  { key: 'rate', header: 'Rate', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (line) => line.rate, cell: (line) => currency(line.rate, code) },
+                  { key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (line) => line.qty * line.rate, cell: (line) => currency(line.qty * line.rate, code) },
+                ]}
+              />
+            );
+          }
+          const source = calcLineSource(l.key, side, obligation, books, events, periods, asAt);
+          if (!source.events.length) {
+            return <Empty>{source.emptyNote ?? 'No posted events on this line through the selected period.'}</Empty>;
+          }
+          const periodOf = (id: string) => periods.find((p) => p.id === id)?.code ?? id;
+          return (
+            <>
+              {source.note ? <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5 }}>{source.note}</p> : null}
+              <SheetTable
+                rows={source.events}
+                rowKey={(e) => e.id}
+                noun="events"
+                footer={
+                  <tr>
+                    <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Total</td>
+                    <td />
+                    <td />
+                    <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>
+                      {currency(source.events.reduce((s, e) => s + e.amount, 0), code)}
+                    </td>
+                    <td />
+                  </tr>
+                }
+                columns={[
+                  { key: 'date', header: 'Date', kind: 'date', value: (e) => e.date, cell: (e) => e.date },
+                  { key: 'period', header: 'Period', value: (e) => periodOf(e.periodId), cell: (e) => periodOf(e.periodId) },
+                  { key: 'type', header: 'Type', value: (e) => e.type, cell: (e) => <Tag kind="neutral">{e.type}</Tag> },
+                  {
+                    key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num',
+                    value: (e) => e.amount, cell: (e) => currency(e.amount, code),
+                  },
+                  { key: 'note', header: 'Note', value: (e) => e.note ?? '', cell: (e) => e.note || <span className="muted">—</span> },
+                ]}
+              />
+            </>
+          );
+        }}
         columns={[
           {
             key: 'line', header: 'Line', value: (l) => l.label,

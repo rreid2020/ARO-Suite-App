@@ -2,8 +2,9 @@
  * In-year transaction processing — Measure.
  *
  * One step to post a new obligation (and its ARO asset), a cost or term
- * adjustment, or a partial/full settlement into the open period. The register
- * is the as-at books; this is where those books move.
+ * adjustment, or a partial/full settlement into the open period. The same
+ * postings can be recorded from an expanded ARO register row. The register is
+ * the as-at books.
  */
 
 import React, { useMemo, useState } from 'react';
@@ -78,7 +79,7 @@ export function Transactions() {
         kicker="Transactions"
         title="Post into the open period"
         note={open
-          ? `These postings write the event ledger in ${open.code} (${open.starts} to ${open.ends}) when you record them. Accretion and amortization run later from Close → Month-end posting. The ARO register is the as-at books of what has already posted.`
+          ? `These postings write the event ledger in ${open.code} (${open.starts} to ${open.ends}) when you record them. The same cost, term and settlement postings can be recorded from an expanded ARO register row. Accretion and amortization run later from Close → Month-end posting. The ARO register is the as-at books of what has already posted.`
           : 'Open a period on Periods & close before posting. New obligations, cost and term adjustments, and settlements all post into the open period.'}
       >
         <div className="register-tab-groups" style={{ marginBottom: 16 }}>
@@ -144,7 +145,7 @@ export function Transactions() {
   );
 }
 
-function NewObligationForm() {
+export function NewObligationForm() {
   const { state, apply } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
@@ -346,13 +347,22 @@ function NewObligationForm() {
   );
 }
 
-function RevisionForm({ kind }: { kind: 'cost' | 'term' }) {
+export function RevisionForm({
+  kind, lockObligationId, embedded,
+}: {
+  kind: 'cost' | 'term';
+  lockObligationId?: string;
+  embedded?: boolean;
+}) {
   const { state, ui, apply } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const open = openPeriod(data)!;
   const live = data.obligations.filter((o) => o.status !== 'Scoped out');
-  const [obligationId, setObligationId] = useState(ui.sub && live.some((o) => o.id === ui.sub) ? ui.sub : live[0]?.id ?? '');
+  const locked = lockObligationId && live.some((o) => o.id === lockObligationId) ? lockObligationId : undefined;
+  const [obligationId, setObligationId] = useState(
+    locked ?? (ui.sub && live.some((o) => o.id === ui.sub) ? ui.sub : live[0]?.id ?? ''),
+  );
   const [amount, setAmount] = useState('');
   const [to, setTo] = useState('');
   const [date, setDate] = useState(open.ends);
@@ -402,6 +412,7 @@ function RevisionForm({ kind }: { kind: 'cost' | 'term' }) {
         {picked?.inProductiveUse === false ? ' This ARO asset is flagged not in productive use, so the offset goes to operating expense.' : ''}
       </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        {!locked && (
         <div style={{ flex: '1 1 260px' }}>
           <Field label="Obligation">
             <select className="input" value={picked?.id ?? ''} onChange={(e) => setObligationId(e.target.value)}>
@@ -409,6 +420,7 @@ function RevisionForm({ kind }: { kind: 'cost' | 'term' }) {
             </select>
           </Field>
         </div>
+        )}
         {kind === 'cost' ? (
           <div style={{ flex: '0 0 180px' }}>
             <Field label="Amount (gross of contingency)">
@@ -442,7 +454,7 @@ function RevisionForm({ kind }: { kind: 'cost' | 'term' }) {
         </div>
         <button className="btn btn-primary btn-sm" onClick={submit} disabled={!valid || !picked}>Record {kind === 'cost' ? 'cost' : 'term'} adjustment</button>
       </div>
-      {picked && picked.adj.length > 0 && (
+      {!embedded && picked && picked.adj.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <SheetTable
             rows={[...picked.adj].sort((a, b) => a.date.localeCompare(b.date))}
@@ -467,14 +479,20 @@ function RevisionForm({ kind }: { kind: 'cost' | 'term' }) {
   );
 }
 
-function SettlementForm() {
+export function SettlementForm({
+  lockObligationId, embedded,
+}: {
+  lockObligationId?: string;
+  embedded?: boolean;
+}) {
   const { state, ui, apply } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const open = openPeriod(data)!;
   const live = data.obligations.filter((o) => o.status !== 'Scoped out');
+  const locked = lockObligationId && live.some((o) => o.id === lockObligationId) ? lockObligationId : undefined;
   const [draft, setDraft] = useState({
-    obligationId: ui.sub && live.some((o) => o.id === ui.sub) ? ui.sub : live[0]?.id ?? '',
+    obligationId: locked ?? (ui.sub && live.some((o) => o.id === ui.sub) ? ui.sub : live[0]?.id ?? ''),
     pct: '100',
     actualCost: '',
     settledOn: open.ends,
@@ -528,6 +546,7 @@ function SettlementForm() {
         True-up the estimate to actual spend, then consume the provision. A share below 100% is a partial settlement. Full settlement can retire the ARO asset. Sale of the related TCA extinguishes the obligation; proceeds on the TCA are the organisation's PPE journal, not this engine.
       </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        {!locked && (
         <div style={{ flex: '1 1 280px' }}>
           <Field label="Obligation">
             <select className="input" value={target?.id ?? ''} onChange={(e) => setDraft({ ...draft, obligationId: e.target.value })}>
@@ -535,6 +554,7 @@ function SettlementForm() {
             </select>
           </Field>
         </div>
+        )}
         <div style={{ flex: '0 0 130px' }}>
           <Field label="Share settled (%)"><input className="input num" value={draft.pct} onChange={(e) => setDraft({ ...draft, pct: e.target.value })} disabled={draft.relatedAssetSold} /></Field>
         </div>
@@ -601,6 +621,7 @@ function SettlementForm() {
         </div>
       )}
 
+      {!embedded && (
       <div style={{ marginTop: 18 }}>
         <div className="kicker" style={{ marginBottom: 8 }}>{data.settlements.length} settlement{data.settlements.length === 1 ? '' : 's'} recorded</div>
         {data.settlements.length === 0 ? (
@@ -628,6 +649,7 @@ function SettlementForm() {
           />
         )}
       </div>
+      )}
     </>
   );
 }

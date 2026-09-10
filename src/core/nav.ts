@@ -57,9 +57,9 @@ export const STEPS: StepDef[] = [
 
   // ── Measure ────────────────────────────────────────────────────────────
   { id: 'transactions', label: 'Transactions', phase: 'Measure', domain: 'estimates',
-    purpose: 'Post in-year activity into the open period: a new obligation and ARO asset, a cost adjustment, a term adjustment, or a partial or full settlement. The ARO register is the as-at books of what has already posted. Accretion and amortization run later from Month-end posting.' },
+    purpose: 'Post in-year activity into the open period: a new obligation and ARO asset, a cost adjustment, a term adjustment, or a partial or full settlement. The same postings can be recorded from an expanded ARO register row. The ARO register is the as-at books of what has already posted. Accretion and amortization run later from Month-end posting.' },
   { id: 'register', label: 'ARO register', phase: 'Measure', domain: 'register',
-    purpose: 'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period; closing is as at the period end. A period with no new postings carries the prior closing forward. Open a row to expand monthly accretion and amortization schedules, the discount curve and calculation details. Post new obligations, adjustments and settlements on Transactions.' },
+    purpose: 'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period; closing is as at the period end. A period with no new postings carries the prior closing forward. Open a row for monthly schedules, calculation details, and to post a cost adjustment, term adjustment or settlement. Open a calculation-details line to see the events in that total. A new obligation can be posted from this page or from Transactions.' },
   { id: 'layers', label: 'Layers & framework', phase: 'Measure', domain: 'assumptions',
     purpose: 'How the framework in force — set on Unit settings — shapes the measurement, and the layers it produces.' },
   { id: 'recalculation', label: 'Recalculation', phase: 'Measure', domain: 'register', auditor: true, firm: false,
@@ -165,8 +165,9 @@ export function resolveFirmNavId(screen: string): string {
 
 /** Leftover reporting-unit screen ids. Recalculation compared the engine to an
  *  external source figure; this product is the source system, so that step is
- *  gone. Cost estimates, adjustments and settlements now post on Transactions.
- *  The retirement-cost sub-ledger still expands under the register row. */
+ *  gone. Cost estimates, adjustments and settlements post on Transactions and
+ *  from an expanded ARO register row. The retirement-cost sub-ledger still
+ *  expands under the register row. */
 export const UNIT_SCREEN_ALIASES: Record<string, string> = {
   recalc: 'register',
   cost: 'transactions',

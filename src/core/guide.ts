@@ -201,7 +201,7 @@ const AUDITOR: Guide = {
 const FIRM: Guide = {
   kicker: 'ARO Suite',
   intro: [
-    'This product is the module of record for asset retirement obligations — not a recalculation against a figure some other system reported. In-year postings happen on Transactions; the register is the as-at books for the reporting unit you have open.',
+    'This product is the module of record for asset retirement obligations — not a recalculation against a figure some other system reported. In-year postings happen on the register row or on Transactions; the register is the as-at books for the reporting unit you have open.',
     'Company setup names the entity, the people and the reference data. Open a reporting unit to finish measurement, chart, posting and the opening register before Prepare.',
   ],
   pillars: [
@@ -230,7 +230,7 @@ const FIRM: Guide = {
     },
     {
       title: 'Measure',
-      body: 'Transactions posts new obligations, cost and term adjustments, and settlements into the open period. The ARO register is the as-at books. Open a row for schedules and calculation details.',
+      body: 'Open a register row to post a cost or term adjustment or a settlement, and to open calculation-details lines for the events in each total. Transactions is the same posting, for the whole open period. The ARO register is the as-at books.',
     },
     {
       title: 'Close',
@@ -260,10 +260,10 @@ const FIRM: Guide = {
     },
     {
       id: 'register',
-      title: '3. Post transactions, then read the register',
+      title: '3. Post on the register or on Transactions',
       body: [
-        'On Transactions, post a new obligation and ARO asset, a cost or term adjustment, or a partial or full settlement into the open period.',
-        'Then read the ARO register as at a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period. Open a row for monthly schedules and calculation details.',
+        'Open an ARO register row for the monthly schedules and calculation details. Beside Obligation and ARO asset are Transactions tabs: cost adjustment, term adjustment and settlement, posted into the open period without leaving the register. Open a calculation-details line to see the events that make up that total.',
+        'A new obligation can be posted from the register or from the Transactions step, which also lists every posting in the open period.',
       ],
     },
     {
@@ -323,12 +323,12 @@ const FIRM: Guide = {
     },
     {
       title: 'Transactions',
-      body: 'Post a new obligation and ARO asset, a cost or term adjustment, or a partial or full settlement into the open period.',
+      body: 'Post a new obligation and ARO asset, a cost or term adjustment, or a partial or full settlement into the open period. The same postings can be recorded from an expanded register row.',
       screen: 'transactions',
     },
     {
       title: 'ARO register',
-      body: 'Opening, in-year postings through the selected period, and closing. Open a row for schedules and calculation details.',
+      body: 'Opening, in-year postings through the selected period, and closing. Open a row for schedules, calculation details, and to post a cost or term adjustment or a settlement. Open a calculation-details line to see the events in that total.',
       screen: 'register',
     },
     {
