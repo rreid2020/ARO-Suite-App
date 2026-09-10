@@ -282,6 +282,24 @@ describe('loadOpeningRegister', () => {
     expect(exported[headers.indexOf('TCA asset number')]).toBe('AS-1');
   });
 
+  it('assigns an ARO asset number from the TCA asset number when the extract leaves it blank', () => {
+    const state = emptyAppState();
+    state.settings['t1'] = settings();
+    const id = addReportingUnit(state, {
+      tenantId: 't1', entity: 'Infrastructure and Environment', fyEnd: '2027-03-31', currency: 'CAD',
+    });
+    const text = [
+      'Reference,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'ARO-1,100,40,10,25,10,AS-1',
+      'ARO-2,80,30,8,20,8,AS-1',
+    ].join('\n');
+    loadOpeningRegister(state, 't1', id, parseOpeningRegister(text), { filename: 'opening.csv', text });
+    expect(state.data[id].obligations.map((o) => o.aroAssetNumber).sort()).toEqual(['ARC-AS-1', 'ARC-AS-1-2']);
+    const headers = openingTemplateHeaders();
+    const exported = openingTemplateDataRows(state.data[id].obligations, state.data[id].events);
+    expect(exported[0][headers.indexOf('ARO asset number')]).toMatch(/^ARC-AS-1/);
+  });
+
   it('updates an existing reference on reload instead of duplicating it', () => {
     const state = emptyAppState();
     state.settings['t1'] = settings();

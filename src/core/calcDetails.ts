@@ -47,7 +47,7 @@ function termFromFyEnd(unit: ReportingUnit, settlement: string): number | null {
   return termYears(unit.fyEnd, settlement, unit.dayCount);
 }
 
-/** Provision statement: baseline, then posted books through the selected period. */
+/** Provision statement: baseline, then event-ledger books through the selected period. */
 export function obligationCalcLines(
   o: Obligation,
   books: RegisterBooks,
@@ -75,7 +75,7 @@ export function obligationCalcLines(
   ];
 }
 
-/** ARO asset statement: useful life as at the selected period, then posted books. */
+/** ARO asset statement: useful life as at the selected period, then event-ledger books. */
 export function assetCalcLines(o: Obligation, books: RegisterBooks, life: UsefulLife): CalcDetailLine[] {
   return [
     yearsLine('totalUl', 'Total useful life', life.totalYears),

@@ -12,7 +12,7 @@ import type { CostLine, Obligation, Revision } from '../engine/derive';
 import { planCaseEntries, selectPostingCase, type PostingFacts } from '../engine/postingCases';
 import type { ObligationEvent } from '../engine/rollforward';
 import { measureObligation } from './measure';
-import { remainingUl } from './openingLoad';
+import { remainingUl, suggestedAroAssetNumber } from './openingLoad';
 import { applyLinkedObligationScope, syncTcaScopeFromObligations, tcaForObligation } from './tcaListing';
 import { assetBooks, openPeriod, provisionCarried } from './periodClose';
 import { newObligationUlIssue, proposeUlAlignment, resolveNewAroUl, ulAlignmentOf, ulAlignmentPending, usefulLifeAsAt, yearsToSettlement } from './usefulLife';
@@ -234,7 +234,8 @@ export function postNewAro(
     region: input.region ?? '',
     aroAssetClass: input.assetClass ?? '',
     assetId: input.assetId ?? '',
-    aroAssetNumber: input.aroAssetNumber ?? '',
+    aroAssetNumber: (input.aroAssetNumber ?? '').trim()
+      || suggestedAroAssetNumber(data.obligations, (input.assetId ?? '').trim() || ref),
     assetAcquisitionDate,
     totalUl,
     expiredUl: expiredUl ?? 0,

@@ -8,7 +8,7 @@
 import React from 'react';
 import { classCodeOf, classKey, classNameOf, findAssetClass } from '../../core/assetClass';
 import { estimatedCostOf, obligationColumns, openingAroCostOf, remainingUl } from '../../core/openingLoad';
-import { obligationsForAsset, tcaAssetStatusOf, tcaNbv } from '../../core/tcaListing';
+import { obligationsForAsset, linkedObligationRefs, tcaAssetStatusOf, tcaNbv } from '../../core/tcaListing';
 import { formatUl, remainingUlYears } from '../../core/usefulLife';
 import type { AroAssetClass, Obligation, TcaAsset, TcaAssetStatus } from '../../core/types';
 import type { ObligationEvent } from '../../engine/rollforward';
@@ -247,10 +247,7 @@ export function tcaListingColumns(args: {
         <option>Disposed</option>
       </select>
     ) },
-    { key: 'linked', header: 'Obligations', kind: 'number' as const, thClassName: 'num', tdClassName: 'num', value: (a) => obligationsForAsset(obligations, a.assetNumber).length, cell: (a) => {
-      const n = obligationsForAsset(obligations, a.assetNumber).length;
-      return n ? String(n) : '—';
-    } },
+    { key: 'linked', header: 'Obligation number', value: (a) => linkedObligationRefs(obligations, a.assetNumber), cell: (a) => cellDash(linkedObligationRefs(obligations, a.assetNumber)) },
     { key: 'scope', header: 'Scope', width: 140, value: (a) => a.scope, cell: (a) => {
       const linked = obligationsForAsset(obligations, a.assetNumber).length > 0;
       return (

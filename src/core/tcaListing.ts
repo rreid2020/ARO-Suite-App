@@ -529,6 +529,10 @@ export function obligationsForAsset(obligations: Obligation[], assetNumber: stri
   return obligations.filter((o) => assetNumberKey(String(o.assetId ?? '')) === key);
 }
 
+export function linkedObligationRefs(obligations: Obligation[], assetNumber: string): string {
+  return obligationsForAsset(obligations, assetNumber).map((o) => o.ref).filter(Boolean).join(', ');
+}
+
 /** The master-listing row this obligation names, if any. */
 export function tcaForObligation(assets: TcaAsset[] | undefined, obligation: { assetId?: unknown }): TcaAsset | undefined {
   const key = assetNumberKey(String(obligation.assetId ?? ''));

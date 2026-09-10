@@ -1,11 +1,14 @@
 /**
  * Period-as-at register books.
  *
- * Opening is always the fiscal-year opening: conversion, or the posted closing
- * of the prior year. In-year columns are cumulative posted journal amounts
- * through the selected period. Draft, approved and reversed batches do not
- * move the register. If nothing has posted since the prior period, closing
- * equals that period's closing.
+ * Opening is always the fiscal-year opening: conversion, or the closing of the
+ * prior year. In-year columns are cumulative event-ledger amounts through the
+ * selected period — new ARO, cost and term adjustments post when recorded;
+ * accretion and amortization post when month-end allocates them. Scheduled
+ * (not yet allocated) charges do not move the register. Journal batches
+ * package those events for the GL; they are not what fills these columns.
+ * If nothing has posted since the prior period, closing equals that period's
+ * closing.
  */
 
 import type { ObligationEvent } from '../engine/rollforward';
@@ -16,7 +19,7 @@ import type { JournalBatch, Obligation } from './types';
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const PROVISION_IN_YEAR = new Set<ObligationEvent['type']>([
-  'addition', 'expense-recognition', 'accretion', 'revision', 'downward-excess', 'settlement', 'disposal', 'fx',
+  'addition', 'expense-recognition', 'accretion', 'revision', 'revision-unproductive', 'downward-excess', 'settlement', 'disposal', 'fx',
 ]);
 
 const ASSET_IN_YEAR = new Set<ObligationEvent['type']>([
@@ -62,18 +65,16 @@ function conversionArc(o: Obligation, events: ObligationEvent[]): number {
   return round2(o.openingArc);
 }
 
-function inYearPosted(
+function inYearEvents(
   o: Obligation,
   events: ObligationEvent[],
   periods: Period[],
-  posted: Set<string>,
   asAt: Period,
 ): ObligationEvent[] {
   const byId = new Map(periods.map((p) => [p.id, p]));
   return events.filter((e) => {
     if (e.obligationId !== o.id) return false;
     if (e.type === 'opening') return false;
-    if (!posted.has(e.id)) return false;
     const p = byId.get(e.periodId);
     if (!p) return false;
     return p.fiscalYear === asAt.fiscalYear && p.no <= asAt.no;
@@ -102,7 +103,7 @@ function booksFrom(
   let writeOffs = 0;
   let massUpdate = 0;
   for (const e of inYear) {
-    if (e.type !== 'revision') continue;
+    if (e.type !== 'revision' && e.type !== 'revision-unproductive') continue;
     const kind = classifyRevisionEvent(o, e);
     if (kind === 'term') termAdjustments = round2(termAdjustments + e.amount);
     else if (kind === 'writeOff') writeOffs = round2(writeOffs + e.amount);
@@ -142,8 +143,8 @@ function lastPeriodOf(periods: Period[], fiscalYear: number): Period | undefined
 }
 
 /**
- * Posted books for one obligation as at a period. Opening is the FY opening
- * (prior-year closing when a prior year exists).
+ * Event-ledger books for one obligation as at a period. Opening is the FY
+ * opening (prior-year closing when a prior year exists).
  */
 export function registerBooks(
   o: Obligation,
@@ -152,7 +153,6 @@ export function registerBooks(
   batches: JournalBatch[],
   asAt: Period,
 ): RegisterBooks {
-  const posted = postedEventIds(batches);
   const priorYear = lastPeriodOf(periods, asAt.fiscalYear - 1);
   let openingProvision: number;
   let openingArc: number;
@@ -164,7 +164,7 @@ export function registerBooks(
     openingProvision = conversionProvision(o, events);
     openingArc = conversionArc(o, events);
   }
-  return booksFrom(o, events, openingProvision, openingArc, inYearPosted(o, events, periods, posted, asAt));
+  return booksFrom(o, events, openingProvision, openingArc, inYearEvents(o, events, periods, asAt));
 }
 
 export function registerBooksById(

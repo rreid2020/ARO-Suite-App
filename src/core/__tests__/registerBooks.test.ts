@@ -39,20 +39,28 @@ const p2 = period({ id: 'p2', no: 2, status: 'Open', starts: '2026-05-01', ends:
 const periods = [p1, p2];
 
 describe('registerBooks', () => {
-  it('opens from conversion and ignores unposted in-year events', () => {
+  it('opens from conversion and includes event-ledger amounts before a journal batch is posted', () => {
     const row = o();
     const events = [
       ev({ id: 'open', type: 'opening', amount: 1_000 }),
       ev({ id: 'accr', type: 'accretion', amount: 10 }),
     ];
-    const draft = registerBooks(row, events, periods, [batch('Draft', ['accr'])], p1);
-    expect(draft.openingProvision).toBe(1_000);
-    expect(draft.accretionExisting).toBe(0);
-    expect(draft.accretionNew).toBe(0);
-    expect(draft.closingProvision).toBe(1_000);
-    expect(draft.openingArc).toBe(800);
-    expect(draft.closingArc).toBe(800);
+    const books = registerBooks(row, events, periods, [batch('Draft', ['accr'])], p1);
+    expect(books.openingProvision).toBe(1_000);
+    expect(books.accretionExisting).toBe(10);
+    expect(books.accretionNew).toBe(0);
+    expect(books.closingProvision).toBe(1_010);
+    expect(books.openingArc).toBe(800);
+    expect(books.closingArc).toBe(800);
     expect(unpostedInYearCount(events, periods, [batch('Draft', ['accr'])], p1)).toBe(1);
+  });
+
+  it('does not invent scheduled accretion that has not been allocated', () => {
+    const row = o();
+    const events = [ev({ id: 'open', type: 'opening', amount: 1_000 })];
+    const books = registerBooks(row, events, periods, [], p1);
+    expect(books.accretionExisting).toBe(0);
+    expect(books.closingProvision).toBe(1_000);
   });
 
   it('includes posted in-year activity in closing', () => {
@@ -85,25 +93,24 @@ describe('registerBooks', () => {
     expect(p2Books.closingProvision).toBe(p1Books.closingProvision);
   });
 
-  it('excludes approved and reversed batches', () => {
+  it('follows the event ledger even when the journal batch is only approved or reversed', () => {
     const row = o();
     const events = [
       ev({ id: 'open', type: 'opening', amount: 1_000 }),
       ev({ id: 'accr', type: 'accretion', amount: 10 }),
     ];
-    expect(registerBooks(row, events, periods, [batch('Approved', ['accr'])], p1).accretionExisting).toBe(0);
+    expect(registerBooks(row, events, periods, [batch('Approved', ['accr'])], p1).accretionExisting).toBe(10);
     const books = registerBooks(row, events, periods, [batch('Reversed', ['accr'])], p1);
-    expect(books.accretionExisting).toBe(0);
-    expect(books.closingProvision).toBe(1_000);
+    expect(books.accretionExisting).toBe(10);
+    expect(books.closingProvision).toBe(1_010);
   });
 
-  it('opens a new ARO at nil and recognises it from a posted addition', () => {
+  it('opens a new ARO at nil and recognises it from the addition event without a journal batch', () => {
     const row = o({ id: 'n1', openingArc: undefined });
     const events = [
       ev({ id: 'add', obligationId: 'n1', type: 'addition', amount: 200, periodId: 'p2' }),
     ];
-    const posted = [{ ...batch('Posted', ['add']), periodId: 'p2' }];
-    const books = registerBooks(row, events, periods, posted, p2);
+    const books = registerBooks(row, events, periods, [], p2);
     expect(books.openingProvision).toBe(0);
     expect(books.newAro).toBe(200);
     expect(books.accretionExisting).toBe(0);

@@ -14,7 +14,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore, useTenant, useUnit } from '../../core/store';
 import { canConfigureTenant, canEdit, canReverse } from '../../core/authority';
 import { completeUnitSetup, publishedCurves, unitNeedsDiscountCurve, unitSetupComplete, updateReportingUnit } from '../../core/createUnit';
-import { loadOpeningRegister, lockOpeningBlocked, obligationColumnNames, openingAccumAmortTotal, openingArcTotal, openingAroCostTotal, openingLocked, openingProvisionTotal, openingTemplateDataRows, openingTemplateHeaders, openingTemplateNotes, parseOpeningRegister } from '../../core/openingLoad';
+import { loadOpeningRegister, lockOpeningBlocked, obligationColumnNames, openingAccumAmortTotal, openingArcTotal, openingAroCostTotal, openingLocked, openingProvisionTotal, openingTemplateDataRows, openingTemplateHeaders, openingTemplateNotes, parseOpeningRegister, fillMissingAroAssetNumbers } from '../../core/openingLoad';
 import { loadTcaListing, lockOpeningBalances, openingObligations, openingTcaListing, parseTcaListing, setTcaAssetStatus, setTcaScope, tcaAccumAmortTotal, tcaAcquisitionCostTotal, tcaByObligationId, tcaColumnNames, tcaNbvTotal, tcaReconciled, tcaScopingGaps, tcaTemplateDataRows, tcaTemplateHeaders, tcaTemplateNotes } from '../../core/tcaListing';
 import { stepsFor } from '../../core/nav';
 import { CALENDAR_TYPES, CalendarType } from '../../core/periods';
@@ -281,6 +281,14 @@ export function UnitOpening() {
   const frozen = !!data?.openingSnapshot;
   const locked = openingLocked(data);
   const tcaLocked = locked || frozen;
+
+  useEffect(() => {
+    if (!data || tcaLocked || !editable) return;
+    if (!data.obligations.some((o) => !String(o.aroAssetNumber ?? '').trim())) return;
+    apply('Assign ARO asset numbers', 'write',
+      'Assigned ARO asset numbers where the opening extract left them blank.',
+      (s) => { fillMissingAroAssetNumbers(s.data[unit.id].obligations); });
+  }, [data, tcaLocked, editable, unit.id, apply]);
   const provTotal = openingProvisionTotal(data?.events ?? []);
   const aroCostTotal = openingAroCostTotal(openingOb);
   const accumTotal = openingAccumAmortTotal(openingOb);

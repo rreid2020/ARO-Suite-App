@@ -57,7 +57,7 @@ export const STEPS: StepDef[] = [
 
   // ── Measure ────────────────────────────────────────────────────────────
   { id: 'register', label: 'ARO register', phase: 'Measure', domain: 'register',
-    purpose: 'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are posted journal amounts through that period; closing is as at the period end. A period with no new postings carries the prior closing forward. Open a row to expand monthly accretion and amortization schedules, the discount curve, calculation details and adjustments.' },
+    purpose: 'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period; closing is as at the period end. A period with no new postings carries the prior closing forward. Open a row to expand monthly accretion and amortization schedules, the discount curve, calculation details and adjustments.' },
   { id: 'layers', label: 'Layers & framework', phase: 'Measure', domain: 'assumptions',
     purpose: 'How the framework in force — set on Unit settings — shapes the measurement, and the layers it produces.' },
   { id: 'recalculation', label: 'Recalculation', phase: 'Measure', domain: 'register', auditor: true, firm: false,

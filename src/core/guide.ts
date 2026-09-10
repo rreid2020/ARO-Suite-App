@@ -262,7 +262,7 @@ const FIRM: Guide = {
       id: 'register',
       title: '3. Read the register',
       body: [
-        'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are posted journal amounts through that period; closing is as at the period end.',
+        'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period — new ARO when you record it, accretion after month-end allocation. Closing is as at the period end.',
         'Open a row to expand monthly accretion and amortization, the discount curve, calculation details and adjustments. Cost estimates, revisions and the ARO asset live on the row — there is not a second screen for them.',
       ],
     },

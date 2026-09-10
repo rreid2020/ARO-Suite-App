@@ -48,20 +48,11 @@ export interface TcaSyncAction {
 
 export type TcaSyncUnit = Pick<ReportingUnit, 'dayCount' | 'calendarType' | 'fyEnd'>;
 
+export { suggestedAroAssetNumber } from './openingLoad';
+
 export function uniqueObligationRef(obligations: Obligation[], base: string): string {
   const used = new Set(obligations.map((o) => o.ref.trim().toLowerCase()));
   const stem = base.trim() || 'ARO';
-  if (!used.has(stem.toLowerCase())) return stem;
-  let i = 2;
-  while (used.has(`${stem}-${i}`.toLowerCase())) i++;
-  return `${stem}-${i}`;
-}
-
-export function suggestedAroAssetNumber(obligations: Obligation[], assetNumber: string): string {
-  const used = new Set(
-    obligations.map((o) => String(o.aroAssetNumber ?? '').trim().toLowerCase()).filter(Boolean),
-  );
-  const stem = `ARC-${assetNumber}`;
   if (!used.has(stem.toLowerCase())) return stem;
   let i = 2;
   while (used.has(`${stem}-${i}`.toLowerCase())) i++;

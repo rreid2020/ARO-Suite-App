@@ -3,7 +3,7 @@ import { emptyAppState } from '../emptyState';
 import { addReportingUnit } from '../createUnit';
 import { loadOpeningRegister, lockOpeningBlocked, parseOpeningRegister } from '../openingLoad';
 import {
-  loadCurrentTcaListing, loadTcaListing, lockOpeningBalances, obligationsForAsset, openingTcaListing, parseTcaListing, setTcaScope, syncTcaScopeFromObligations, tcaAcquisitionDateOf, tcaFieldsFromPayload, tcaForObligation, tcaPayloadOf, tcaScopingGaps,
+  loadCurrentTcaListing, loadTcaListing, lockOpeningBalances, linkedObligationRefs, obligationsForAsset, openingTcaListing, parseTcaListing, setTcaScope, syncTcaScopeFromObligations, tcaAcquisitionDateOf, tcaFieldsFromPayload, tcaForObligation, tcaPayloadOf, tcaScopingGaps,
   tcaTemplateDataRows, tcaTemplateHeaders, tcaTemplateNotes,
 } from '../tcaListing';
 import type { TenantSettings } from '../types';
@@ -192,6 +192,9 @@ describe('loadTcaListing and scoping', () => {
     expect(byNo['AS-1'].scope).toBe('In scope');
     expect(byNo['AS-2'].scope).toBe('Undecided');
     expect(obligationsForAsset(state.data[id].obligations, 'AS-1')).toHaveLength(1);
+    expect(linkedObligationRefs(state.data[id].obligations, 'AS-1')).toBe('ARO-1');
+    expect(linkedObligationRefs(state.data[id].obligations, 'AS-2')).toBe('');
+    expect(state.data[id].obligations[0].aroAssetNumber).toBe('ARC-AS-1');
   });
 
   it('loads Asset status and defaults blank or missing to Active', () => {

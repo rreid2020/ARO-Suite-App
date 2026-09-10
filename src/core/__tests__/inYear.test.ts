@@ -97,6 +97,7 @@ describe('post new ARO', () => {
     expect(data.events.some((e) => e.type === 'addition' && e.obligationId === posted.obligationId)).toBe(true);
     const created = data.obligations.find((o) => o.ref === 'ARO-100')!;
     expect(created.openingArc).toBeUndefined();
+    expect(created.aroAssetNumber).toBe('ARC-ARO-100');
     expect(openingArcTotal(data.obligations)).toBe(800_000);
     const books = assetBooks(data.events, data.periods, created, data.periods[0]);
     expect(books.nbv).toBe(posted.amount);

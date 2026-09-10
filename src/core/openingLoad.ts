@@ -421,6 +421,28 @@ export function remainingUl(o: Obligation): number | null {
   return total - (expired ?? 0);
 }
 
+/** Retirement-cost asset identifier. Distinct from the TCA asset number. */
+export function suggestedAroAssetNumber(obligations: Obligation[], assetNumber: string): string {
+  const used = new Set(
+    obligations.map((o) => String(o.aroAssetNumber ?? '').trim().toLowerCase()).filter(Boolean),
+  );
+  const stem = `ARC-${(assetNumber || 'ARO').trim() || 'ARO'}`;
+  if (!used.has(stem.toLowerCase())) return stem;
+  let i = 2;
+  while (used.has(`${stem}-${i}`.toLowerCase())) i++;
+  return `${stem}-${i}`;
+}
+
+export function fillMissingAroAssetNumbers(obligations: Obligation[]): number {
+  let n = 0;
+  for (const o of obligations) {
+    if (String(o.aroAssetNumber ?? '').trim()) continue;
+    o.aroAssetNumber = suggestedAroAssetNumber(obligations, String(o.assetId ?? '').trim() || o.ref);
+    n++;
+  }
+  return n;
+}
+
 /** Conversion fields that must not move once opening balances are locked. ARO Total UL can still be changed on the ARO asset. */
 export const OPENING_BALANCE_FIELDS = [
   'openingArc', 'openingAccumAmort', 'openingFv', 'expiredUl',
@@ -617,7 +639,7 @@ export function openingTemplateNotes(): string[][] {
     ['Nothing is loaded until every error is fixed. Partial files are refused.'],
     ['Obligation Number is required and must be unique.'],
     ['TCA asset number is required. It is the link to the master TCA listing; that asset is in scope. Alias: Asset number.'],
-    ['ARO asset number is optional. It is the retirement-cost asset identifier, distinct from the TCA asset number.'],
+    ['ARO asset number is optional on the file. If it is blank, one is assigned from the TCA asset number (ARC- plus that number). It is the retirement-cost asset identifier, distinct from the TCA asset number.'],
     ['Opening provision, ARO asset (NBV) and Accumulated amortization are required numbers (0 is allowed).'],
     ['ARO acquisition cost is NBV plus accumulated amortization. Leave it blank on load — the listing calculates it.'],
     ['Total UL and Expired UL are required (years, or years and leftover months such as 17 yr · 9 mo). Expired UL cannot exceed Total UL. Remaining UL is Total UL minus Expired UL; leave it blank on load.'],
@@ -639,7 +661,7 @@ export function openingTemplateNotes(): string[][] {
     [],
     ['ARO and TCA asset columns'],
     ['TCA asset number', 'Required. The related tangible-capital-asset identifier on the master listing. Aliases: Asset number, Asset, Asset id, ANLN1.'],
-    ['ARO asset number', 'The retirement-cost asset identifier. Distinct from the TCA asset number. Aliases: ARO asset no, ARO asset id, ANLN2.'],
+    ['ARO asset number', 'The retirement-cost asset identifier. Distinct from the TCA asset number. Leave blank to assign ARC- plus the TCA asset number. Aliases: ARO asset no, ARO asset id, ANLN2.'],
     ['ARO Asset Description', 'What the retirement-cost asset is. Aliases: Asset description, PPE description. TCA description comes from the master listing after load.'],
     ['Asset acquisition date', 'Optional on this extract. The master listing\'s acquisition date is shown on the obligation and ARO asset listing after load. Aliases: Acquisition date, In service date.'],
     ['ARO asset class code', 'Organisation class code (ANLKL). Stored on the obligation and used to pick the posting scenario. Aliases: Asset class code, Class code, ANLKL.'],
@@ -732,7 +754,7 @@ export function loadOpeningRegister(
       lines: existing?.lines?.length ? existing.lines : lines,
       adj: existing?.adj ?? [],
       assetId: row.assetId || existing?.assetId || '',
-      aroAssetNumber: row.aroAssetNumber || existing?.aroAssetNumber || '',
+      aroAssetNumber: row.aroAssetNumber || String(existing?.aroAssetNumber ?? '') || suggestedAroAssetNumber(data.obligations, String(row.assetId || existing?.assetId || row.ref)),
       assetDescription: row.assetDescription || existing?.assetDescription || '',
       assetAcquisitionDate: row.assetAcquisitionDate || existing?.assetAcquisitionDate || '',
       site: row.site || existing?.site || '',

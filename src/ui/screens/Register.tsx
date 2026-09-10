@@ -11,14 +11,15 @@
  * take."
  *
  * The default set is posted books as at a chosen fiscal year and period.
- * Opening is the prior-year closing. In-year columns are posted journals only.
+ * Opening is the prior-year closing. In-year columns are event-ledger amounts
+ * through that period. Journal batches package those amounts for the GL.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit } from '../../core/authority';
-import { extraColumnKey, extraColumnName, isOpeningBalanceField, obligationColumnNames, obligationColumns, obligationField, openingLocked, patchObligationField, remainingUl } from '../../core/openingLoad';
+import { extraColumnKey, extraColumnName, isOpeningBalanceField, obligationColumnNames, obligationColumns, obligationField, openingLocked, patchObligationField, remainingUl, suggestedAroAssetNumber } from '../../core/openingLoad';
 import { tcaAssetStatusOf, tcaByObligationId, tcaColumnNames, tcaForObligation } from '../../core/tcaListing';
 import { classCodeOf, classKey, classNameOf, findAssetClass } from '../../core/assetClass';
 import { formatUl, evaluateNewAroLifeDraft, nextUlDraftFromTca, parseUlYears, suggestedSettlementDate, ulAlignmentPending, usefulLifeAsAt, termToSettlementAtYearStart, withSettlementFromRemaining } from '../../core/usefulLife';
@@ -102,7 +103,7 @@ const COLUMNS: ColDef[] = [
   { key: 'varianceCause', label: 'Variance cause', group: 'Movement', kind: 'select', options: ['', ...VARIANCE_CAUSES], width: 200 },
 ];
 
-/** Posted books as at the selected period — FY opening, cumulative posted in-year, closing. */
+/** Posted books as at the selected period — FY opening, cumulative event-ledger in-year, closing. */
 const POSTED_COLUMNS: ColDef[] = [
   { key: '_ob_open', label: 'Opening balances', group: 'Opening', kind: 'derived', align: 'right', width: 104 },
   { key: '_ob_settle', label: 'Settlement', group: 'Existing', kind: 'derived', align: 'right', width: 96 },
@@ -637,7 +638,7 @@ export function Register() {
         { label: 'Opening ARO asset', value: currency(postedTotals.openingArc, unit.currency) },
         { label: asAt ? `Closing ARO asset ${asAt.code}` : 'Closing ARO asset', value: currency(postedTotals.closingArc, unit.currency) },
         { label: 'Reported problems', value: String(derived.invalid.length), tone: derived.invalid.length ? 'bad' : 'ok' },
-        ...(unposted ? [{ label: 'Unposted in-year events', value: String(unposted), tone: 'warn' as const }] : []),
+        ...(unposted ? [{ label: 'Not yet in a posted journal batch', value: String(unposted), tone: 'warn' as const }] : []),
       ]} />
 
         {derived.invalid.length === 0 ? null : (
@@ -733,11 +734,13 @@ export function Register() {
                   prevTca,
                   nextTca,
                 });
+                const keepUserAro = Boolean(newAro.aroAssetNumber && newAro.aroAssetNumber !== suggestedAroAssetNumber(data.obligations, newAro.assetId));
                 setNewAro(withSettlementFromRemaining(
                   newAro,
                   {
                     ...newAro,
                     assetId,
+                    aroAssetNumber: keepUserAro ? newAro.aroAssetNumber : (assetId.trim() ? suggestedAroAssetNumber(data.obligations, assetId) : ''),
                     assetAcquisitionDate: keepUserDate ? newAro.assetAcquisitionDate : (nextDefault || newAro.assetAcquisitionDate),
                     totalUl: ul.totalUl,
                     expiredUl: ul.expiredUl,
@@ -748,7 +751,7 @@ export function Register() {
                 ));
               }} />
             </Field>
-            <Field label="ARO asset number" help="The retirement-cost asset identifier. Distinct from the TCA asset number.">
+            <Field label="ARO asset number" help="The retirement-cost asset identifier. Distinct from the TCA asset number. Assigned from the TCA asset number when blank.">
               <input className="input" value={newAro.aroAssetNumber} onChange={(e) => setNewAro({ ...newAro, aroAssetNumber: e.target.value })} />
             </Field>
             <Field label="ARO asset class code">
@@ -812,7 +815,7 @@ export function Register() {
         kicker="Register"
         title={`${filtered.length} obligation${filtered.length === 1 ? '' : 's'}`}
         note={asAt
-          ? `As at ${asAt.code} (${asAt.starts} to ${asAt.ends}). Opening is the prior fiscal year's closing, or the conversion opening in the first year. Existing and new columns are posted journal amounts through this period — draft, approved and reversed batches do not move the register. A period with no new postings carries the prior period's closing forward.`
+          ? `As at ${asAt.code} (${asAt.starts} to ${asAt.ends}). Opening is the prior fiscal year's closing, or the conversion opening in the first year. Existing and new columns are event-ledger amounts through this period — new ARO, cost and term adjustments when you record them; accretion and amortization after month-end allocation. A period with no new postings carries the prior period's closing forward.`
           : 'Generate a fiscal calendar on Periods & close to view posted books as at a period.'}
         actions={
           <>
@@ -969,7 +972,7 @@ export function Register() {
                           : c.key.startsWith('_tca_')
                           ? <span>{tcaJoinDisplay(c.key, tcaByObl.get(o.id))}</span>
                           : c.kind === 'derived'
-                          ? <span title={c.basis ? `Basis: ${c.basis}` : POSTED_KEYS.has(c.key) ? 'Posted journals through the selected period' : undefined}>{derivedCell(c.key, d, unit.currency, booksById.get(o.id), postedById.get(o.id))}</span>
+                          ? <span title={c.basis ? `Basis: ${c.basis}` : POSTED_KEYS.has(c.key) ? 'Event-ledger amounts through the selected period' : undefined}>{derivedCell(c.key, d, unit.currency, booksById.get(o.id), postedById.get(o.id))}</span>
                           : c.key === 'inProductiveUse'
                             ? (
                               <select
@@ -1063,7 +1066,7 @@ export function Register() {
           <button className="btn btn-secondary btn-sm" disabled={page >= pages - 1} onClick={() => setPage((p) => p + 1)}>Next</button>
           <SheetStatus sheet={sheet} noun="obligations" />
           <span className="muted" style={{ marginLeft: 'auto' }}>
-            Derived cells are tinted. Posted books use posted journals only. Open a row for monthly schedules, calculation details and adjustments. Paste a block from Excel into any editable cell.
+            Derived cells are tinted. Posted books follow the event ledger through the selected period. Open a row for monthly schedules, calculation details and adjustments. Paste a block from Excel into any editable cell.
           </span>
         </div>
       </Block>

@@ -188,7 +188,7 @@ export function ObligationExpand({
             <DetailTable
               kicker="Obligation"
               title="Baseline and in-year movement"
-              note="Initial cost is the estimate as recorded. Current-year dollars escalate that estimate to the year end. Terms are from the year end to the original and adjusted settlement dates. Opening, changes of estimate and accretion are posted journals through the selected period — the same split as Roll-forward & disclosure."
+              note="Initial cost is the estimate as recorded. Current-year dollars escalate that estimate to the year end. Terms are from the year end to the original and adjusted settlement dates. Opening, new ARO, changes of estimate and accretion follow the event ledger through the selected period — the same split as the register."
               rows={obligationCalcLines(picked, books, d, unit)}
               currency={unit.currency}
               calendar={unit.calendarType}
