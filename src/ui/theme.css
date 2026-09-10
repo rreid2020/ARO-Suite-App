@@ -516,3 +516,77 @@ a:hover { color: var(--color-accent-700); }
 }
 .toast-ok { background: var(--color-accent-900); color: var(--color-bg); border-left: 3px solid var(--color-accent-300); }
 .toast-refused { background: #4d150c; color: #fdeeea; border-left: 3px solid #c9573c; }
+
+/* — how to use it — */
+.howto-hero {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.howto .btn-primary { background: var(--color-accent-900); color: var(--color-bg); }
+.howto .btn-primary:hover:not(:disabled) { background: var(--color-accent-800); }
+.howto-title {
+  font-size: clamp(32px, 5vw, 44px); letter-spacing: -0.03em;
+  margin: 4px 0 18px; line-height: 1.05;
+}
+.howto-intro { max-width: 46em; }
+.howto-intro p { margin: 0 0 12px; font-size: 16px; line-height: 1.6; text-wrap: pretty; }
+.howto-pillars {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px; padding: 22px 0; margin: 22px 0 8px;
+  border-top: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-divider);
+}
+.howto-pillars p { margin: 8px 0 0; font-size: 14px; line-height: 1.55; text-wrap: pretty; }
+.howto-split {
+  display: grid; grid-template-columns: 200px minmax(0, 1fr);
+  gap: 48px; margin-top: 28px; align-items: start;
+}
+.howto-toc { position: sticky; top: 18px; display: flex; flex-direction: column; gap: 7px; }
+.howto-toc .kicker { margin-bottom: 4px; }
+.howto-toc a {
+  color: inherit; text-decoration: none; font-size: 13.5px; line-height: 1.35;
+}
+.howto-toc a:hover { color: var(--color-accent); }
+.howto-section { margin: 0 0 36px; max-width: 46em; scroll-margin-top: 16px; }
+.howto-section h2 { font-size: 28px; margin: 0 0 10px; }
+.howto-section h3 { font-size: 16px; margin: 18px 0 6px; }
+.howto-section p { margin: 0 0 10px; text-wrap: pretty; }
+.howto-lead { font-size: 14px; font-style: italic; color: color-mix(in srgb, var(--color-text) 62%, transparent); }
+.howto-minutes { margin: 8px 0 0; padding-left: 1.2em; }
+.howto-minutes li { margin: 0 0 10px; text-wrap: pretty; }
+.howto-faq + .howto-faq { margin-top: 8px; }
+
+@media (max-width: 860px) {
+  .howto-pillars, .howto-split { grid-template-columns: 1fr; }
+  .howto-toc { position: static; }
+}
+
+/* — guided walkthrough — */
+.tour-backdrop {
+  position: fixed; top: 0; right: 0; bottom: 0; left: 262px; z-index: 20;
+  background: color-mix(in srgb, var(--color-accent-900) 58%, transparent);
+}
+.tour-card {
+  position: fixed; top: 18px; left: 250px; z-index: 21;
+  width: min(360px, calc(100vw - 270px));
+  background: var(--color-bg); color: var(--color-text);
+  padding: 16px 16px 12px; box-shadow: var(--shadow-lg);
+}
+.tour-title {
+  font-size: 18px; margin: 4px 0 8px; letter-spacing: -0.02em;
+}
+.tour-body {
+  margin: 0 0 16px; font-size: 13.5px; line-height: 1.5; text-wrap: pretty;
+}
+.tour-foot {
+  display: flex; align-items: center; gap: 10px;
+}
+.tour-dots { display: flex; align-items: center; gap: 6px; margin-right: auto; }
+.tour-dot {
+  width: 7px; height: 7px; padding: 0; border: 0; cursor: pointer;
+  background: color-mix(in srgb, var(--color-text) 22%, transparent);
+}
+.tour-dot.on { background: var(--color-text); }
+.tour-actions { display: flex; align-items: center; gap: 4px; }
+.tour-card .btn-primary { background: var(--color-accent-900); color: var(--color-bg); }
+.tour-card .btn-primary:hover:not(:disabled) { background: var(--color-accent-800); }

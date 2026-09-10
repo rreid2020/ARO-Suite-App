@@ -447,4 +447,6 @@ export interface UiState {
   /** The return banner — naming the unit and prerequisite you left to fix. */
   setupTrail: { unitId: string; screen: string; label: string; note: string } | null;
   toast: { kind: 'ok' | 'refused'; text: string } | null;
+  /** Guided walkthrough step index, or null when the overlay is off. */
+  tour: number | null;
 }

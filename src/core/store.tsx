@@ -63,6 +63,7 @@ const initialUi: UiState = {
   sub: '',
   setupTrail: null,
   toast: null,
+  tour: null,
 };
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {

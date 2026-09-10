@@ -57,7 +57,7 @@ export function Units() {
       deleteReportingUnit(s, tenant.id, u.id);
     });
     if (ui.unitId === u.id || ui.setupTrail?.unitId === u.id) {
-      setUi({ unitId: null, screen: 'setup', setupTrail: null, tab: '', sub: '' });
+      setUi({ unitId: null, screen: 'setup', setupTrail: null, tab: '', sub: '', tour: null });
     }
   };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveUnitScreen, STEPS, stepsFor } from '../nav';
+import { FIRM_NAV, resolveFirmNavId, resolveUnitScreen, STEPS, stepsFor } from '../nav';
 
 describe('reporting-unit navigation', () => {
   it('does not expose Recalculation — this product is the source system', () => {
@@ -45,6 +45,13 @@ describe('reporting-unit navigation', () => {
       expect(auditor, `auditor should see ${id}`).toContain(id);
       expect(firm, `a reporting entity should not see ${id}`).not.toContain(id);
     }
+  });
+
+  it('lists How to use it as a firm screen, not a numbered unit step', () => {
+    expect(FIRM_NAV[0].id).toBe('howto');
+    expect(STEPS.some((s) => s.id === 'howto')).toBe(false);
+    expect(resolveFirmNavId('howto')).toBe('howto');
+    expect(resolveUnitScreen('howto')).toBe('howto');
   });
 
   it('does not resurrect the retired `recalc` id', () => {

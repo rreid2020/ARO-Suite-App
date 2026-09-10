@@ -138,6 +138,7 @@ export interface FirmNavDef {
 }
 
 export const FIRM_NAV: FirmNavDef[] = [
+  { id: 'howto', label: 'How to use it', purpose: 'The five-minute path through this tenant’s workflow, and a 30-second walkthrough on the live screens. Skip whenever you like — it is not a wizard you cannot leave.' },
   { id: 'setup', label: 'Company setup', purpose: 'Name each reporting unit (entity, year end, currency), then people, authority, the framework catalogue, measurement defaults, cost-estimate templates and the curve library. Open a unit to set measurement, chart, posting, the fiscal calendar and the opening register before Prepare.' },
   { id: 'changelog', label: 'Change log', purpose: 'Field-level history: field, record, before and after, with restore.' },
   { id: 'audit', label: 'Audit trail', purpose: 'Actor, action, kind, detail and timestamp — including every refused write.' },

@@ -11,9 +11,10 @@ import React from 'react';
 import { useClerk } from '@clerk/react';
 import { useStore, useTenant, useUnit, useUnitWord } from '../core/store';
 import { FIRM_NAV, PHASES, resolveFirmNavId, resolveUnitScreen, stepById, stepsFor, unitLandingScreen } from '../core/nav';
+import { tourIndexForScreen } from '../core/guide';
 import { landingScreen } from '../core/setup';
 import { ROLES } from '../core/authority';
-import { ReturnBanner } from './components';
+import { ReturnBanner, Walkthrough } from './components';
 import { AroWordmark } from './Logo';
 import { Screen } from './screens';
 
@@ -33,11 +34,17 @@ export function Shell() {
   const firmScreen = resolveFirmNavId(ui.screen);
   const firmNav = FIRM_NAV.find((n) => n.id === firmScreen);
 
+  const howto = firmScreen === 'howto';
   const title = step ? step.label : firmNav ? firmNav.label : 'ARO Suite';
   const purpose = step ? step.purpose : firmNav ? firmNav.purpose : '';
   const crumb = step
     ? `${tenant.name} · ${unit?.entity ?? unitWord} · ${step.phase}`
     : tenant.name;
+
+  const go = (screen: string) => {
+    const tour = ui.tour == null ? null : tourIndexForScreen(tenant.kind, screen, ui.tour);
+    setUi({ screen, tab: '', sub: '', tour });
+  };
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'stretch' }}>
@@ -55,7 +62,7 @@ export function Shell() {
             onChange={(e) => {
               const t = state.tenants.find((x) => x.id === e.target.value)!;
               const owner = state.users.find((u) => u.tenantId === t.id && u.isOwner) ?? state.users.find((u) => u.tenantId === t.id);
-              setUi({ tenantId: t.id, unitId: null, screen: landingScreen(state, t.id), userName: owner?.name ?? ui.userName, role: owner?.role ?? ui.role });
+              setUi({ tenantId: t.id, unitId: null, screen: landingScreen(state, t.id), userName: owner?.name ?? ui.userName, role: owner?.role ?? ui.role, tour: null });
             }}
             style={{ minHeight: 30, fontSize: 12, padding: '2px 6px', background: 'transparent', color: 'var(--color-bg)', borderColor: 'color-mix(in srgb,var(--color-bg) 40%,transparent)' }}
           >
@@ -70,7 +77,7 @@ export function Shell() {
             // sidebar sections stay live so a trip to the change log does not
             // cost the user their place in the workflow.
             <SideButton key={n.id} active={firmScreen === n.id} label={n.label} title={n.purpose}
-              onClick={() => setUi({ screen: n.id, tab: '', sub: '' })} />
+              onClick={() => go(n.id)} />
           ))}
           <div style={{ fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.55, padding: '10px 10px 6px' }}>
             {unitWord}s
@@ -88,7 +95,9 @@ export function Shell() {
               onClick={() => {
                 const landing = unitLandingScreen(tenant.kind, state, u);
                 const stay = ui.unitId === u.id && Boolean(step);
-                setUi({ unitId: u.id, screen: stay ? ui.screen : landing, tab: stay ? ui.tab : '', sub: stay ? ui.sub : '' });
+                const nextScreen = stay ? ui.screen : landing;
+                const tour = stay ? ui.tour : null;
+                setUi({ unitId: u.id, screen: nextScreen, tab: stay ? ui.tab : '', sub: stay ? ui.sub : '', tour });
               }}
             />
           ))}
@@ -103,7 +112,7 @@ export function Shell() {
                 FY end {unit.fyEnd} · {unit.currency}
               </div>
               <button
-                onClick={() => setUi({ unitId: null, screen: 'units' })}
+                onClick={() => setUi({ unitId: null, screen: 'units', tour: null })}
                 style={{ marginTop: 4, background: 'transparent', border: '1px solid color-mix(in srgb,var(--color-bg) 35%,transparent)', color: 'var(--color-bg)', padding: '3px 7px', fontSize: 10.5, cursor: 'pointer', fontFamily: 'var(--font-body)', alignSelf: 'flex-start' }}
               >Close {unitWord.toLowerCase()}</button>
             </div>
@@ -121,7 +130,7 @@ export function Shell() {
                       label={s.label}
                       title={s.purpose}
                       num={String(steps.indexOf(s) + 1).padStart(2, '0')}
-                      onClick={() => setUi({ screen: s.id, tab: '', sub: '' })}
+                      onClick={() => go(s.id)}
                     />
                   ))}
                 </React.Fragment>
@@ -144,7 +153,7 @@ export function Shell() {
           </select>
           <button
             onClick={() => {
-              setUi({ signedIn: false, tenantId: null, unitId: null, setupTrail: null });
+              setUi({ signedIn: false, tenantId: null, unitId: null, setupTrail: null, tour: null });
               void signOut();
             }}
             style={{ background: 'transparent', border: '1px solid color-mix(in srgb,var(--color-bg) 40%,transparent)', color: 'var(--color-bg)', padding: '5px 8px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-body)' }}
@@ -153,30 +162,33 @@ export function Shell() {
       </nav>
 
       {/* ── main column ──────────────────────────────────────────────── */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', padding: '14px 26px', borderBottom: '2px solid var(--color-divider)' }}>
-          <div style={{ marginRight: 'auto', minWidth: 0 }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase' }} className="muted">{crumb}</div>
-            <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 20, letterSpacing: '-0.02em', lineHeight: 1.15 }}>{title}</div>
-            {purpose && <div style={{ fontSize: 12, marginTop: 2, textWrap: 'pretty' }} className="muted">{purpose}</div>}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
-            <div style={{ fontSize: 11, textAlign: 'right' }} className="muted">{tenant.env}</div>
-            <div className="tag tag-accent">{ROLES.find((r) => r.id === ui.role)?.label}</div>
-          </div>
-        </header>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {!howto && (
+          <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', padding: '14px 26px', borderBottom: '2px solid var(--color-divider)' }}>
+            <div style={{ marginRight: 'auto', minWidth: 0 }}>
+              <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase' }} className="muted">{crumb}</div>
+              <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: 20, letterSpacing: '-0.02em', lineHeight: 1.15 }}>{title}</div>
+              {purpose && <div style={{ fontSize: 12, marginTop: 2, textWrap: 'pretty' }} className="muted">{purpose}</div>}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
+              <div style={{ fontSize: 11, textAlign: 'right' }} className="muted">{tenant.env}</div>
+              <div className="tag tag-accent">{ROLES.find((r) => r.id === ui.role)?.label}</div>
+            </div>
+          </header>
+        )}
 
-        <main style={{ flex: 1, minWidth: 0, padding: '22px 26px 60px' }}>
+        <main style={{ flex: 1, minWidth: 0, padding: howto ? '28px 40px 80px' : '22px 26px 60px' }}>
           {ui.setupTrail && (
             <ReturnBanner
               note={ui.setupTrail.note}
               label={ui.setupTrail.label}
-              onBack={() => setUi({ unitId: ui.setupTrail!.unitId, screen: ui.setupTrail!.screen, setupTrail: null })}
+              onBack={() => setUi({ unitId: ui.setupTrail!.unitId, screen: ui.setupTrail!.screen, setupTrail: null, tour: null })}
               onDismiss={() => setUi({ setupTrail: null })}
             />
           )}
           <Screen />
         </main>
+        <Walkthrough />
       </div>
     </div>
   );

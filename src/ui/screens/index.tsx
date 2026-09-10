@@ -22,10 +22,12 @@ import { Calendar, MonthEnd, Reval, Settle, Journals, Batches, Recon } from './c
 import { Rollf, Py, Sens } from './report';
 import { Freeze, Sampling, Complete, Review } from './assure';
 import { RecalcImport, RecalcSource, Recalculation, RecalcCompare, RecalcExceptions, RecalcVariance } from './recalc';
+import { HowTo } from './howto';
 
 const SCREENS: Record<string, React.ComponentType> = {
   // Tenant scope. Former Firm screens (units, curves, users, company,
   // frameworks, authority) render Setup — FIRM_SETUP_ALIASES maps them to a step.
+  howto: HowTo,
   units: Setup, setup: Setup,
   curves: Setup, users: Setup, company: Setup, frameworks: Setup, authority: Setup,
   changelog: ChangeLog, audit: AuditTrail, portal: Portal,
