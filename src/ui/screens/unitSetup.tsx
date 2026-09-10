@@ -26,7 +26,8 @@ import type { TcaAsset, TcaAssetStatus, TcaScope } from '../../core/types';
 import { Block, ConventionSelects, Empty, Field, currency, parseNumber, SheetTable, Stats } from '../components';
 import { download, S } from '../../xlsx/write';
 import { ChartOfAccounts, PostingRulesPanel } from './chartSetup';
-import { groupOpeningRows, moneyFooter, obligationColumnKeys, obligationExtractColumns, obligationMoneyTotals, registerColumns, registerMoneyTotals, tcaListingColumns, tcaMoneyTotals } from './openingListings';
+import { groupOpeningRows, moneyFooter, obligationExtractColumns, obligationMoneyTotals, registerColumns, registerMoneyTotals, tcaListingColumns, tcaMoneyTotals } from './openingListings';
+import { listingSheet, listingWorkbookName } from './listingExport';
 
 export function UnitSetup() {
   const { state, ui, setUi, apply } = useStore();
@@ -530,6 +531,58 @@ export function UnitOpening() {
     ]);
   };
 
+  const exportListings = () => {
+    const events = data?.events ?? [];
+    const tcaCols = tcaListingColumns({
+      extras: tcaExtras,
+      obligations: openingOb,
+      currency: unit.currency,
+      calendarType: unit.calendarType,
+      editable: false,
+      locked: true,
+      onScope: () => {},
+    });
+    const obligationCols = obligationExtractColumns({
+      events,
+      extras: extraNames,
+      classes,
+      currency: unit.currency,
+      calendarType: unit.calendarType,
+    });
+    const combinedCols = registerColumns({
+      events,
+      extras: extraNames,
+      tcaExtras,
+      tcaByObl,
+      classes,
+      currency: unit.currency,
+      calendarType: unit.calendarType,
+    });
+    download(listingWorkbookName(unit.entity, 'opening-listings'), [
+      listingSheet({
+        name: 'Master TCA listing',
+        title: `${unit.entity} — Conversion master TCA listing`,
+        columns: tcaCols,
+        rows: openingTca,
+        totals: tcaMoneyTotals(openingTca),
+      }),
+      listingSheet({
+        name: 'Obligation listing',
+        title: `${unit.entity} — Conversion obligation and ARO asset listing`,
+        columns: obligationCols,
+        rows: openingOb,
+        totals: obligationMoneyTotals(openingOb, events),
+      }),
+      listingSheet({
+        name: 'Combined listing',
+        title: `${unit.entity} — Conversion combined listing`,
+        columns: combinedCols,
+        rows: openingOb,
+        totals: registerMoneyTotals(openingOb, events, tcaByObl),
+      }),
+    ]);
+  };
+
   return (
     <>
     <div className="posting-tabs" role="tablist" aria-label="Opening register">
@@ -554,6 +607,9 @@ export function UnitOpening() {
           : 'This is the completeness population at conversion. Assets that appear as TCA asset number on the obligation and ARO asset listing are in scope. Mark every remaining row so nothing is left unmarked. Asset status is Active, Unproductive or Disposed. Acquisition cost and accumulated amortization recon to the opening GL; net book value is listing cost minus listing accum.'}
         actions={
           <>
+            <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+              Export listings to Excel
+            </button>
             <button className="btn btn-secondary btn-sm" type="button" onClick={exportTcaTemplate}>
               Export TCA template
             </button>
@@ -663,7 +719,7 @@ export function UnitOpening() {
               onStatus: tcaLocked ? undefined : changeTcaStatus,
             })}
             footer={moneyFooter(
-              tcaListingColumns({ extras: tcaExtras, obligations: openingOb, currency: unit.currency, calendarType: unit.calendarType, editable: editable && !tcaLocked, locked: tcaLocked, onScope: changeTcaScope, onStatus: tcaLocked ? undefined : changeTcaStatus }).map((c) => c.key),
+              tcaListingColumns({ extras: tcaExtras, obligations: openingOb, currency: unit.currency, calendarType: unit.calendarType, editable: editable && !tcaLocked, locked: tcaLocked, onScope: changeTcaScope, onStatus: tcaLocked ? undefined : changeTcaStatus }),
               tcaMoneyTotals(openingTca),
               unit.currency,
             )}
@@ -678,10 +734,13 @@ export function UnitOpening() {
         kicker="Obligation and ARO Asset Listing"
         title={openingOb.length === 0 ? 'Load existing obligations and opening balances' : `${openingOb.length} obligation${openingOb.length === 1 ? '' : 's'} on the listing`}
         note={frozen
-          ? 'These are the conversion obligations frozen when opening balances were locked. New in-year obligations created from ARO scoping appear on the ARO Register, not here.'
+          ? 'These are the conversion obligations frozen when opening balances were locked. New in-year obligations created from ARO scoping appear on ARO scoping and the ARO Register, not here.'
           : 'Each row is an obligation from the conversion extract. ARO asset number, description, acquisition date, class, acquisition cost, accumulated amortization, NBV and useful life are the extract\'s ARO asset columns. Lock opening balances here once both listings agree to their GL totals.'}
         actions={
           <>
+            <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+              Export listings to Excel
+            </button>
             <button className="btn btn-secondary btn-sm" type="button" onClick={exportTemplate}>
               Export template
             </button>
@@ -819,13 +878,13 @@ export function UnitOpening() {
               calendarType: unit.calendarType,
             })}
             footer={moneyFooter(
-              obligationColumnKeys(obligationExtractColumns({
+              obligationExtractColumns({
                 events: data.events,
                 extras: extraNames,
                 classes,
                 currency: unit.currency,
                 calendarType: unit.calendarType,
-              })),
+              }),
               obligationMoneyTotals(openingOb, data.events),
               unit.currency,
             )}
@@ -840,8 +899,13 @@ export function UnitOpening() {
         kicker="Register"
         title="Master TCA listing joined to the obligation and ARO asset listing"
         note={frozen
-          ? 'Conversion rows only, joined to the frozen master TCA listing. In-year obligations created after lock are on the ARO Register.'
-          : 'One row per obligation, with the linked TCA fields beside it. TCA cost totals count each linked asset once. Grouped Postings uses these same columns.'}
+          ? 'Conversion rows only, joined to the frozen master TCA listing. Obligation, ARO asset and master TCA listing columns are colour-coded. In-year obligations created after lock are on ARO scoping and the ARO Register.'
+          : 'One row per obligation, with the linked TCA fields beside it. Obligation, ARO asset and master TCA listing columns are colour-coded. TCA cost totals count each linked asset once. Grouped Postings uses these same columns.'}
+        actions={
+          <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+            Export listings to Excel
+          </button>
+        }
       >
         {(openingOb.length) === 0 ? (
           <Empty>Load the obligation and ARO asset listing and the master TCA listing to see the merged register.</Empty>
@@ -860,7 +924,7 @@ export function UnitOpening() {
               calendarType: unit.calendarType,
             })}
             footer={moneyFooter(
-              obligationColumnKeys(registerColumns({
+              registerColumns({
                 events: data.events,
                 extras: extraNames,
                 tcaExtras,
@@ -868,7 +932,7 @@ export function UnitOpening() {
                 classes,
                 currency: unit.currency,
                 calendarType: unit.calendarType,
-              })),
+              }),
               registerMoneyTotals(openingOb, data.events, tcaByObl),
               unit.currency,
             )}
@@ -882,7 +946,12 @@ export function UnitOpening() {
         className={`posting-pane g-tone ${paneTone}`}
         kicker="Grouped Postings"
         title="The register, grouped"
-        note="Same columns as Register. By asset class groups on ARO asset class. By obligation type groups on the extract type; empty type is No type."
+        note="Same columns as Register. Obligation, ARO asset and master TCA listing columns are colour-coded. By asset class groups on ARO asset class. By obligation type groups on the extract type; empty type is No type."
+        actions={
+          <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+            Export listings to Excel
+          </button>
+        }
       >
         <div className="posting-subtabs" role="tablist" aria-label="Grouped postings">
           <button type="button" role="tab" aria-selected={groupedSub === 'class'}
@@ -917,7 +986,7 @@ export function UnitOpening() {
                 noun="rows"
                 columns={cols}
                 footer={moneyFooter(
-                  obligationColumnKeys(cols),
+                  cols,
                   registerMoneyTotals(group.rows, data.events, tcaByObl),
                   unit.currency,
                 )}

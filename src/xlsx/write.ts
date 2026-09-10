@@ -122,12 +122,21 @@ export type Cell =
   | number
   | { v?: string | number | null; f?: string; s?: number; t?: 'd' };
 
+export interface SheetMerge {
+  r1: number;
+  c1: number;
+  r2: number;
+  c2: number;
+}
+
 export interface Sheet {
   name: string;
   rows: Cell[][];
   cols?: number[];
   /** Rows to freeze at the top. */
   freeze?: number;
+  /** 0-based inclusive ranges, written as Excel mergeCells. */
+  merges?: SheetMerge[];
 }
 
 function cellXml(ref: string, cell: Cell): string {
@@ -160,7 +169,11 @@ function sheetXml(sheet: Sheet): string {
   const freeze = sheet.freeze
     ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${sheet.freeze}" topLeftCell="A${sheet.freeze + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
     : '';
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${freeze}${cols ? `<cols>${cols}</cols>` : ''}<sheetData>${rows}</sheetData></worksheet>`;
+  const merges = (sheet.merges ?? []).filter((m) => m.r2 > m.r1 || m.c2 > m.c1);
+  const mergeXml = merges.length
+    ? `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${colName(m.c1)}${m.r1 + 1}:${colName(m.c2)}${m.r2 + 1}"/>`).join('')}</mergeCells>`
+    : '';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${freeze}${cols ? `<cols>${cols}</cols>` : ''}<sheetData>${rows}</sheetData>${mergeXml}</worksheet>`;
 }
 
 export function build(sheets: Sheet[]): Blob {

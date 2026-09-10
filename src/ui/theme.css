@@ -171,9 +171,11 @@ a:hover { color: var(--color-accent-700); }
 .g-existing, .g-activity { --g: #276a78; }
 .g-new { --g: #8a6a24; }
 .g-closing { --g: #1a4534; }
-.g-aro-asset, .g-asset, .g-tca { --g: #3d5c7a; }
+.g-aro-asset, .g-asset { --g: #3d5c7a; }
+.g-tca, .g-master-tca-listing { --g: #2a5f6e; }
 .g-obligation { --g: #2f6b47; }
 .g-dates { --g: #5a5470; }
+.g-extra-columns { --g: #6a5e52; }
 .g-calculated { --g: #3f6b48; }
 .g-movement { --g: #7a5530; }
 .g-source, .g-other { --g: #6a5e52; }

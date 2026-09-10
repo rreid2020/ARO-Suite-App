@@ -117,4 +117,16 @@ describe('xlsx writer', () => {
     // Row 4 has a null in column B, so B4 must not appear at all.
     expect(xml).not.toContain('r="B4"');
   });
+
+  it('writes merged section headings after the sheet data', async () => {
+    const grouped: Sheet = {
+      name: 'Combined',
+      merges: [{ r1: 0, c1: 0, r2: 0, c2: 2 }],
+      rows: [[{ v: 'Obligation', s: S.head }, '', '']],
+    };
+    const xml = (await unzip(build([grouped]))).get('xl/worksheets/sheet1.xml')!;
+    expect(xml).toContain('<mergeCells count="1">');
+    expect(xml).toContain('ref="A1:C1"');
+    expect(xml.indexOf('</sheetData>')).toBeLessThan(xml.indexOf('<mergeCells'));
+  });
 });

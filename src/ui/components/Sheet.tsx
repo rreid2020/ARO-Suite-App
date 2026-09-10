@@ -11,6 +11,7 @@ import {
   applySheet, condLabels, emptyFilter, isFilterActive, sortLabels, uniqueForColumn,
   SheetCond, SheetFilter, SheetKind, SheetSort, SheetSpec, valueKey,
 } from '../sheet';
+import { columnGroupSpans, groupToneClass } from '../groupTone';
 
 export interface SheetColumn<T> extends SheetSpec<T> {
   header: React.ReactNode;
@@ -21,6 +22,8 @@ export interface SheetColumn<T> extends SheetSpec<T> {
   thStyle?: React.CSSProperties;
   tdStyle?: React.CSSProperties | ((row: T) => React.CSSProperties);
   width?: number | string;
+  /** Colour-coded section heading above this column (ARO register groups). */
+  group?: string;
 }
 
 export interface SheetHandle<T> {
@@ -297,18 +300,34 @@ export function SheetTable<T>({
   const specs = useMemo(() => columns.map((c) => ({ key: c.key, kind: c.kind, value: c.value })), [columns]);
   const sheet = useSheet(rows, specs, defaultSort);
   const colSpan = (leading ? 1 : 0) + columns.length;
+  const groups = useMemo(() => columnGroupSpans(columns.map((c) => c.group)), [columns]);
+  const showGroups = columns.some((c) => c.group);
+  const autoGroupHeader = showGroups ? (
+    <tr className="grp">
+      {leading && <th className={groupToneClass('lead')} />}
+      {groups.map((g, i) => (
+        <th key={`${g.group}-${i}`} className={g.group ? groupToneClass(g.group, true) : undefined} colSpan={g.span}>
+          {g.group || null}
+        </th>
+      ))}
+    </tr>
+  ) : null;
 
   return (
     <>
       <div className="scroll-x">
         <table className="table" ref={tableRef}>
           <thead>
-            {groupHeader}
+            {groupHeader ?? autoGroupHeader}
             <tr>
               {leading && <th style={{ width: leading.width }}>{leading.header}</th>}
-              {columns.map((c) => (
-                <SheetTh key={c.key} col={c} sheet={sheet} className={c.thClassName} style={c.thStyle} width={c.width} />
-              ))}
+              {columns.map((c, i) => {
+                const start = i === 0 || columns[i - 1].group !== c.group;
+                const tone = c.group ? groupToneClass(c.group, start, c.thClassName) : c.thClassName;
+                return (
+                  <SheetTh key={c.key} col={c} sheet={sheet} className={tone} style={c.thStyle} width={c.width} />
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -325,10 +344,12 @@ export function SheetTable<T>({
               const cells = (
                 <tr className={className}>
                   {leading && <td>{leading.cell(row)}</td>}
-                  {columns.map((c) => {
+                  {columns.map((c, i) => {
+                    const start = i === 0 || columns[i - 1].group !== c.group;
                     const tdClass = typeof c.tdClassName === 'function' ? c.tdClassName(row) : c.tdClassName;
                     const tdStyle = typeof c.tdStyle === 'function' ? c.tdStyle(row) : c.tdStyle;
-                    return <td key={c.key} className={tdClass} style={tdStyle}>{c.cell(row)}</td>;
+                    const tone = c.group ? groupToneClass(c.group, start, tdClass) : tdClass;
+                    return <td key={c.key} className={tone} style={tdStyle}>{c.cell(row)}</td>;
                   })}
                 </tr>
               );

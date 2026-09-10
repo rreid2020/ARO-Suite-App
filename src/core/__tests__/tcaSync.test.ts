@@ -7,6 +7,7 @@ import {
   applyCreateObligation,
   applyDisposeLinkedAro,
   applyListingExpiredUl,
+  applySelectedTcaSync,
   applyTcaStatusToAro,
   applyUlFromTca,
   planTcaSync,
@@ -214,6 +215,21 @@ describe('register → listing gaps', () => {
     expect(well.expiredUl).toBe(0);
     expect(data.obligations[0].expiredUl).toBe(openingExpired);
     expect(data.obligations[0].totalUl).toBe(openingTotal);
+    expect(plan(data).some((a) => a.kind === 'listing-ul')).toBe(false);
+  });
+
+  it('corrects listing expired UL on several assets in one apply', () => {
+    const { data } = ready();
+    for (const a of data.tcaAssets) {
+      a.acquisitionDate = '2026-03-31';
+      a.totalUl = 30;
+      a.expiredUl = 5;
+    }
+    const listing = plan(data).filter((a) => a.kind === 'listing-ul');
+    expect(listing.map((a) => a.assetNumber).sort()).toEqual(['AS-10001', 'AS-10002']);
+    const msg = applySelectedTcaSync(data, listing, ulUnit);
+    expect(msg).toMatch(/^Corrected Expired UL on 2 listing rows/);
+    expect(data.tcaAssets.every((a) => a.expiredUl === 0)).toBe(true);
     expect(plan(data).some((a) => a.kind === 'listing-ul')).toBe(false);
   });
 

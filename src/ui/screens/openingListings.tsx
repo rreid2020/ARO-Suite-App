@@ -1,7 +1,8 @@
 /**
- * Opening-register listing columns shared by Obligation and ARO Asset Listing,
- * Register, and Grouped Postings. Currency footers total the source rows, not the
- * current filter. TCA money on the merged view counts each linked asset once.
+ * Listing columns shared by Opening register (conversion) and ARO scoping
+ * (current obligation listing and combined go-forward listing). Currency footers
+ * total the source rows, not the current filter. TCA money on the merged view
+ * counts each linked asset once.
  */
 
 import React from 'react';
@@ -12,25 +13,43 @@ import { formatUl, remainingUlYears } from '../../core/usefulLife';
 import type { AroAssetClass, Obligation, TcaAsset, TcaAssetStatus } from '../../core/types';
 import type { ObligationEvent } from '../../engine/rollforward';
 import { currency, SheetColumn } from '../components';
+import { groupToneClass } from '../groupTone';
 import { SCOPING_REASONS } from '../../seed';
+
+const ARO_ASSET_KEYS = new Set([
+  'assetId', 'aroAssetNumber', 'assetDescription', 'assetAcquisitionDate',
+  'classCode', 'className', 'aroCost', 'accum', 'arc', 'totalUl', 'expiredUl', 'remainingUl',
+]);
+
+export function combinedGroupOf(key: string): string {
+  if (key.startsWith('tca:') || key.startsWith('tca')) return 'Master TCA listing';
+  if (key.startsWith('col:')) return 'Extra columns';
+  if (ARO_ASSET_KEYS.has(key)) return 'ARO asset';
+  return 'Obligation';
+}
 
 export function cellDash(v: unknown): React.ReactNode {
   const s = v == null ? '' : String(v);
   return s || '—';
 }
 
-export function moneyFooter(keys: string[], money: Record<string, number>, code: string) {
+export function moneyFooter<T>(columns: SheetColumn<T>[], money: Record<string, number>, code: string) {
   return (
     <tr>
-      {keys.map((k, i) => (
-        <td
-          key={k}
-          className={k in money ? 'num' : undefined}
-          style={i === 0 ? { fontFamily: 'var(--font-heading)', fontWeight: 800 } : undefined}
-        >
-          {i === 0 ? 'Total' : k in money ? currency(money[k], code) : ''}
-        </td>
-      ))}
+      {columns.map((c, i) => {
+        const start = i === 0 || columns[i - 1].group !== c.group;
+        const extra = c.key in money ? 'num' : undefined;
+        const className = c.group ? groupToneClass(c.group, start, extra) : extra;
+        return (
+          <td
+            key={c.key}
+            className={className}
+            style={i === 0 ? { fontFamily: 'var(--font-heading)', fontWeight: 800 } : undefined}
+          >
+            {i === 0 ? 'Total' : c.key in money ? currency(money[c.key], code) : ''}
+          </td>
+        );
+      })}
     </tr>
   );
 }
@@ -161,23 +180,23 @@ export function registerColumns(args: {
 }): SheetColumn<Obligation>[] {
   const { tcaByObl, tcaExtras, currency: code } = args;
   return [
-    ...obligationExtractColumns(args),
-    { key: 'tcaDescription', header: 'TCA description', value: (o) => tcaByObl.get(o.id)?.description ?? '', tdStyle: { whiteSpace: 'normal' as const, maxWidth: 200 }, cell: (o) => cellDash(tcaByObl.get(o.id)?.description) },
-    { key: 'tcaClass', header: 'TCA asset class', value: (o) => tcaByObl.get(o.id)?.assetClass ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.assetClass) },
-    { key: 'tcaAcq', header: 'TCA acquisition date', value: (o) => tcaByObl.get(o.id)?.acquisitionDate ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.acquisitionDate) },
-    { key: 'tcaSite', header: 'TCA site', value: (o) => tcaByObl.get(o.id)?.site ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.site) },
-    { key: 'tcaStatus', header: 'TCA asset status', value: (o) => tcaByObl.get(o.id) ? tcaAssetStatusOf(tcaByObl.get(o.id)!) : '', cell: (o) => cellDash(tcaByObl.get(o.id) ? tcaAssetStatusOf(tcaByObl.get(o.id)!) : '') },
-    { key: 'tcaScope', header: 'TCA scope', value: (o) => tcaByObl.get(o.id)?.scope ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.scope) },
-    { key: 'tcaReason', header: 'TCA reason if out', value: (o) => tcaByObl.get(o.id)?.scopeReason ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.scopeReason) },
-    { key: 'tcaCost', header: 'TCA acquisition cost', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (o) => tcaByObl.get(o.id)?.acquisitionCost ?? 0, cell: (o) => {
+    ...obligationExtractColumns(args).map((c) => ({ ...c, group: combinedGroupOf(c.key) })),
+    { key: 'tcaDescription', header: 'TCA description', group: 'Master TCA listing', value: (o) => tcaByObl.get(o.id)?.description ?? '', tdStyle: { whiteSpace: 'normal' as const, maxWidth: 200 }, cell: (o) => cellDash(tcaByObl.get(o.id)?.description) },
+    { key: 'tcaClass', header: 'TCA asset class', group: 'Master TCA listing', value: (o) => tcaByObl.get(o.id)?.assetClass ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.assetClass) },
+    { key: 'tcaAcq', header: 'TCA acquisition date', group: 'Master TCA listing', value: (o) => tcaByObl.get(o.id)?.acquisitionDate ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.acquisitionDate) },
+    { key: 'tcaSite', header: 'TCA site', group: 'Master TCA listing', value: (o) => tcaByObl.get(o.id)?.site ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.site) },
+    { key: 'tcaStatus', header: 'TCA asset status', group: 'Master TCA listing', value: (o) => tcaByObl.get(o.id) ? tcaAssetStatusOf(tcaByObl.get(o.id)!) : '', cell: (o) => cellDash(tcaByObl.get(o.id) ? tcaAssetStatusOf(tcaByObl.get(o.id)!) : '') },
+    { key: 'tcaScope', header: 'TCA scope', group: 'Master TCA listing', value: (o) => tcaByObl.get(o.id)?.scope ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.scope) },
+    { key: 'tcaReason', header: 'TCA reason if out', group: 'Master TCA listing', value: (o) => tcaByObl.get(o.id)?.scopeReason ?? '', cell: (o) => cellDash(tcaByObl.get(o.id)?.scopeReason) },
+    { key: 'tcaCost', header: 'TCA acquisition cost', group: 'Master TCA listing', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (o) => tcaByObl.get(o.id)?.acquisitionCost ?? 0, cell: (o) => {
       const n = tcaByObl.get(o.id)?.acquisitionCost;
       return typeof n === 'number' ? currency(n, code) : '—';
     } },
-    { key: 'tcaAccum', header: 'TCA accumulated amortization', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (o) => tcaByObl.get(o.id)?.accumAmort ?? 0, cell: (o) => {
+    { key: 'tcaAccum', header: 'TCA accumulated amortization', group: 'Master TCA listing', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (o) => tcaByObl.get(o.id)?.accumAmort ?? 0, cell: (o) => {
       const n = tcaByObl.get(o.id)?.accumAmort;
       return typeof n === 'number' ? currency(n, code) : '—';
     } },
-    { key: 'tcaNbv', header: 'TCA net book value', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (o) => {
+    { key: 'tcaNbv', header: 'TCA net book value', group: 'Master TCA listing', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (o) => {
       const tca = tcaByObl.get(o.id);
       return tca ? tcaNbv(tca) : 0;
     }, cell: (o) => {
@@ -187,6 +206,7 @@ export function registerColumns(args: {
     ...tcaExtras.map((name) => ({
       key: `tca:${name}`,
       header: `TCA · ${name}`,
+      group: 'Master TCA listing' as const,
       value: (o: Obligation) => tcaByObl.get(o.id)?.columns[name] ?? '',
       tdStyle: { maxWidth: 180, whiteSpace: 'normal' as const },
       cell: (o: Obligation) => tcaByObl.get(o.id)?.columns[name] || <span className="muted">—</span>,
@@ -267,8 +287,4 @@ export function tcaMoneyTotals(assets: TcaAsset[]) {
     accum: assets.reduce((s, a) => s + (typeof a.accumAmort === 'number' ? a.accumAmort : 0), 0),
     nbv: assets.reduce((s, a) => s + tcaNbv(a), 0),
   };
-}
-
-export function obligationColumnKeys(cols: SheetColumn<Obligation>[]): string[] {
-  return cols.map((c) => c.key);
 }

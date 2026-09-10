@@ -1,12 +1,7 @@
 /**
- * ARO scoping — go-forward master TCA listing after opening lock.
- *
- * Conversion population stays on Opening register. An updated listing is
- * compared to the ARO register both ways, and acted on: scope new assets,
- * create linked obligations, flag unproductive ARO assets, retire disposed
- * TCAs, add missing TCA rows for orphan obligations, prove listing Expired UL
- * from acquisition to conversion, and align remaining UL only after the listing
- * life is consistent.
+ * ARO scoping — current master TCA listing, current obligation listing,
+ * actions that keep those two listings in step, and the combined go-forward
+ * listing. Conversion population stays on Opening register.
  */
 
 import React, { useRef, useState } from 'react';
@@ -32,12 +27,14 @@ import {
   applyCreateObligation,
   applyDisposeLinkedAro,
   applyListingExpiredUl,
+  applySelectedTcaSync,
   applyTcaStatusToAro,
   applyUlFromTca,
   applyUnproductiveFlags,
   planTcaSync,
   suggestedAroAssetNumber,
   tcaAssetByNumber,
+  tcaSyncCanBulkApply,
   uniqueObligationRef,
   type TcaSyncAction,
 } from '../../core/tcaSync';
@@ -49,18 +46,22 @@ import {
   Block, Empty, Field, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, SheetTable, Stats,
 } from '../components';
 import type { EstimateLineDraft, EstimateMode } from '../components';
-import { moneyFooter, obligationColumnKeys, obligationExtractColumns, obligationMoneyTotals, tcaListingColumns, tcaMoneyTotals } from './openingListings';
+import { moneyFooter, obligationExtractColumns, obligationMoneyTotals, registerColumns, registerMoneyTotals, tcaListingColumns, tcaMoneyTotals } from './openingListings';
+import { listingSheet, listingWorkbookName } from './listingExport';
 import { download, S } from '../../xlsx/write';
 
 const SCOPING_TABS = [
   { id: 'tca', label: 'Master TCA listing', kicker: 'Current', tone: 'g-aro-asset' },
+  { id: 'obligations', label: 'Obligation listing', kicker: 'Current', tone: 'g-obligation' },
   { id: 'actions', label: 'Keep ARO in sync', kicker: 'Actions', tone: 'g-movement' },
-  { id: 'register', label: 'Obligation and ARO Asset Listing', kicker: 'Go-forward', tone: 'g-obligation' },
+  { id: 'combined', label: 'Combined go-forward listing', kicker: 'Go-forward', tone: 'g-dates' },
 ] as const;
 
 type ScopingTabId = (typeof SCOPING_TABS)[number]['id'];
 
 function scopingTabOf(tab: string | undefined): ScopingTabId {
+  // Deprecated: the former `register` tab was the obligation listing only.
+  if (tab === 'register') return 'obligations';
   if (SCOPING_TABS.some((t) => t.id === tab)) return tab as ScopingTabId;
   return 'tca';
 }
@@ -94,6 +95,7 @@ export function Scope() {
   const [report, setReport] = useState<string[] | null>(null);
   const [createFor, setCreateFor] = useState<string | null>(null);
   const [disposeFor, setDisposeFor] = useState<string | null>(null);
+  const [sel, setSel] = useState<Set<string>>(new Set());
   const open = openPeriod(data);
   const [create, setCreate] = useState({
     ref: '', description: '', costEstimateDate: priorYearEnd(unit.fyEnd),
@@ -109,17 +111,41 @@ export function Scope() {
   const gaps = tcaScopingGaps(assets, data.obligations);
   const actions = planTcaSync(data, unit);
   const listingUlCount = actions.filter((a) => a.kind === 'listing-ul').length;
+  const bulkable = actions.filter((a) => tcaSyncCanBulkApply(a.kind));
+  const selectedBulk = actions.filter((a) => sel.has(a.id) && tcaSyncCanBulkApply(a.kind));
+  const allBulkableSelected = bulkable.length > 0 && bulkable.every((a) => sel.has(a.id));
   const inScope = assets.filter((a) => a.scope === 'In scope').length;
   const out = assets.filter((a) => a.scope === 'Scoped out');
   const tcaExtras = tcaColumnNames(assets);
   const classes = state.settings[tenant.id].aroAssetClasses ?? [];
   const extraNames = obligationColumnNames(data.obligations);
+  const tcaByObl = tcaByObligationId(assets, data.obligations);
+  const obligationCols = obligationExtractColumns({
+    events: data.events,
+    extras: extraNames,
+    classes,
+    currency: unit.currency,
+    calendarType: unit.calendarType,
+    tcaByObl,
+  });
+  const combinedCols = registerColumns({
+    events: data.events,
+    extras: extraNames,
+    tcaExtras,
+    tcaByObl,
+    classes,
+    currency: unit.currency,
+    calendarType: unit.calendarType,
+  });
   const tab = scopingTabOf(ui.tab);
   const paneTone = SCOPING_TABS.find((t) => t.id === tab)?.tone ?? 'g-aro-asset';
   const tabMeta: Record<ScopingTabId, string> = {
     tca: `${assets.length} asset${assets.length === 1 ? '' : 's'}`,
+    obligations: `${data.obligations.length} obligation${data.obligations.length === 1 ? '' : 's'}`,
     actions: actions.length ? `${actions.length} to review` : 'In sync',
-    register: `${data.obligations.length} obligation${data.obligations.length === 1 ? '' : 's'}`,
+    combined: data.obligations.length === 0
+      ? 'Load both listings'
+      : `${data.obligations.length} rows · ${assets.length} TCA`,
   };
 
   const loadTca = (text: string, filename: string) => {
@@ -217,6 +243,55 @@ export function Scope() {
           i === 0 ? [{ v: row[0], s: S.title }] : row
         )),
       },
+    ]);
+  };
+
+  const tcaCols = tcaListingColumns({
+    extras: tcaExtras,
+    obligations: data.obligations,
+    currency: unit.currency,
+    calendarType: unit.calendarType,
+    editable: editable && goForward,
+    locked: !goForward,
+    onScope: changeTcaScope,
+    onStatus: goForward ? changeTcaStatus : undefined,
+  });
+
+  const exportListings = () => {
+    download(listingWorkbookName(unit.entity, 'aro-scoping-listings'), [
+      listingSheet({
+        name: 'Master TCA listing',
+        title: `${unit.entity} — Current master TCA listing`,
+        columns: tcaCols,
+        rows: assets,
+        totals: tcaMoneyTotals(assets),
+      }),
+      listingSheet({
+        name: 'Obligation listing',
+        title: `${unit.entity} — Current obligation listing`,
+        columns: obligationCols,
+        rows: data.obligations,
+        totals: obligationMoneyTotals(data.obligations, data.events),
+      }),
+      listingSheet({
+        name: 'Combined listing',
+        title: `${unit.entity} — Combined go-forward listing`,
+        columns: combinedCols,
+        rows: data.obligations,
+        totals: registerMoneyTotals(data.obligations, data.events, tcaByObl),
+      }),
+      listingSheet({
+        name: 'Keep ARO in sync',
+        title: `${unit.entity} — Actions to keep the two listings in step`,
+        columns: [
+          { key: 'kind', header: 'Action', value: (a: TcaSyncAction) => kindLabel(a.kind) },
+          { key: 'foundOn', header: 'Found', value: (a: TcaSyncAction) => foundOnLabel(a.foundOn) },
+          { key: 'assetNumber', header: 'TCA asset number', value: (a: TcaSyncAction) => a.assetNumber },
+          { key: 'description', header: 'Description', value: (a: TcaSyncAction) => a.description },
+          { key: 'detail', header: 'What to do', value: (a: TcaSyncAction) => a.detail },
+        ],
+        rows: actions,
+      }),
     ]);
   };
 
@@ -329,6 +404,29 @@ export function Scope() {
     apply('Align remaining UL', 'write', msg, (s) => {
       applyUlFromTca(s.data[unit.id], action, unit);
     });
+  };
+
+  const submitSelected = () => {
+    const chosen = actions.filter((a) => sel.has(a.id));
+    const bulk = chosen.filter((a) => tcaSyncCanBulkApply(a.kind));
+    if (!bulk.length) {
+      apply('Apply selected sync actions', 'refused',
+        chosen.length
+          ? 'Those rows need their own form — create an obligation or retire an ARO one asset at a time.'
+          : 'Select the listing UL, remaining UL, or productive-use rows to apply together.',
+        () => {});
+      return;
+    }
+    const probe = structuredClone(data);
+    const msg = applySelectedTcaSync(probe, bulk, unit);
+    if (msg.startsWith('Nothing') || msg.startsWith('That action') || msg.startsWith('Correct Expired UL') || msg.startsWith('Listing expired')) {
+      apply('Apply selected sync actions', 'refused', msg, () => {});
+      return;
+    }
+    apply('Apply selected sync actions', 'write', msg, (s) => {
+      applySelectedTcaSync(s.data[unit.id], bulk, unit);
+    });
+    setSel(new Set());
   };
 
   const openListingImport = () => {
@@ -461,6 +559,7 @@ export function Scope() {
 
       <Stats items={[
         { label: 'TCA assets', value: String(assets.length) },
+        { label: 'Obligations', value: String(data.obligations.length) },
         { label: 'In scope', value: String(inScope) },
         { label: 'Out of scope', value: String(out.length) },
         { label: 'Undecided', value: String(gaps.undecided.length), tone: gaps.undecided.length ? 'warn' : 'ok' },
@@ -470,7 +569,7 @@ export function Scope() {
       {tab === 'tca' && (
         <Block
           className={`posting-pane g-tone ${paneTone}`}
-          kicker="Master TCA listing"
+          kicker="Current master TCA listing"
           title={goForward
             ? (assets.length === 0 ? 'Load the current tangible capital assets' : `${assets.length} asset${assets.length === 1 ? '' : 's'} on the current listing`)
             : 'Conversion scoping is on Opening register'}
@@ -481,6 +580,9 @@ export function Scope() {
             <>
               <button className="btn btn-secondary btn-sm" type="button" onClick={() => setUi({ screen: 'unit-opening', tab: '', sub: '' })}>
                 Open opening register
+              </button>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+                Export listings to Excel
               </button>
               {goForward && (
                 <>
@@ -538,18 +640,9 @@ export function Scope() {
               rows={assets}
               rowKey={(a) => a.id}
               noun="assets"
-              columns={tcaListingColumns({
-                extras: tcaExtras,
-                obligations: data.obligations,
-                currency: unit.currency,
-                calendarType: unit.calendarType,
-                editable: editable && goForward,
-                locked: !goForward,
-                onScope: changeTcaScope,
-                onStatus: goForward ? changeTcaStatus : undefined,
-              })}
+              columns={tcaCols}
               footer={moneyFooter(
-                tcaListingColumns({ extras: tcaExtras, obligations: data.obligations, currency: unit.currency, calendarType: unit.calendarType, editable: editable && goForward, locked: !goForward, onScope: changeTcaScope, onStatus: goForward ? changeTcaStatus : undefined }).map((c) => c.key),
+                tcaCols,
                 tcaMoneyTotals(assets),
                 unit.currency,
               )}
@@ -576,22 +669,125 @@ export function Scope() {
         </Block>
       )}
 
+      {tab === 'obligations' && (
+        <Block
+          className={`posting-pane g-tone ${paneTone}`}
+          kicker="Current obligation listing"
+          title={data.obligations.length === 0
+            ? 'No current obligations yet'
+            : `${data.obligations.length} obligation${data.obligations.length === 1 ? '' : 's'} on the current listing`}
+          note="Every current obligation on this reporting unit, including rows created after conversion. Opening register still shows only the conversion population. Total UL, Expired UL and Remaining UL are years and leftover months. Listing figures default onto the ARO asset; change UL on the ARO Register if the retirement-cost asset life differs."
+          actions={
+            <>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+                Export listings to Excel
+              </button>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setUi({ screen: 'register', tab: '', sub: '' })}>
+                Open ARO Register
+              </button>
+            </>
+          }
+        >
+          {data.obligations.length === 0 ? (
+            <Empty>{goForward
+              ? 'No current obligations yet. In-scope assets on the master TCA listing get a new obligation from Keep ARO in sync.'
+              : 'No obligations yet. Load the conversion extract on Opening register, lock opening balances, then return here for go-forward changes.'}</Empty>
+          ) : (
+            <SheetTable
+              rows={data.obligations}
+              rowKey={(o) => o.id}
+              noun="obligations"
+              columns={obligationCols}
+              footer={moneyFooter(
+                obligationCols,
+                obligationMoneyTotals(data.obligations, data.events),
+                unit.currency,
+              )}
+            />
+          )}
+        </Block>
+      )}
+
       {tab === 'actions' && (
         <Block
           className={`posting-pane g-tone ${paneTone}`}
           kicker="Keep ARO in sync"
-          title={actions.length === 0 ? 'The current listing and the ARO register are in step' : `${actions.length} action${actions.length === 1 ? '' : 's'} to keep the ARO register in step`}
-          note="Listing Expired UL is proved first: years from the TCA acquisition date to conversion (prior year end). Same-day acquisition and conversion means expired UL is zero. Correct that figure on the listing; do not copy a wrong listing remaining onto the ARO. After the listing is consistent, remaining UL on linked obligations can be aligned. Unproductive flags ARO not in productive use; Disposed retires remaining provision and the ARO asset. Obligations whose TCA is missing are the reverse pass."
+          title={actions.length === 0 ? 'The current master TCA listing and the current obligation listing are in step' : `${actions.length} action${actions.length === 1 ? '' : 's'} to keep the two listings in step`}
+          note="These actions keep the current master TCA listing and the current obligation listing in step. Listing Expired UL is proved first: years from the TCA acquisition date to conversion (prior year end). Same-day acquisition and conversion means expired UL is zero. Correct that figure on the listing; do not copy a wrong listing remaining onto the ARO. Select several Correct listing UL, remaining UL, or productive-use rows and apply them together. After the listing is consistent, remaining UL on linked obligations can be aligned. Unproductive flags ARO not in productive use; Disposed retires remaining provision and the ARO asset. Obligations whose TCA is missing are the reverse pass."
+          actions={
+            <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+              Export listings to Excel
+            </button>
+          }
         >
           {!goForward ? (
             <Empty>Lock opening balances on Opening register before go-forward sync actions are taken here.</Empty>
           ) : actions.length === 0 ? (
             <Empty>Nothing to do. New TCA rows, Unproductive and Disposed status, in-scope assets without an obligation, listing Expired UL that does not match acquisition through conversion, orphan ARO rows, and remaining-UL drift versus a consistent listing will appear here after the next listing load or status change.</Empty>
           ) : (
+            <>
+              {editable && bulkable.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    type="button"
+                    onClick={() => setSel(allBulkableSelected ? new Set() : new Set(bulkable.map((a) => a.id)))}
+                  >
+                    {allBulkableSelected ? 'Clear selection' : `Select all applyable (${bulkable.length})`}
+                  </button>
+                  {listingUlCount > 1 && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      type="button"
+                      onClick={() => setSel(new Set(actions.filter((a) => a.kind === 'listing-ul').map((a) => a.id)))}
+                    >
+                      Select all Correct listing UL ({listingUlCount})
+                    </button>
+                  )}
+                  {sel.size > 0 && !allBulkableSelected && (
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => setSel(new Set())}>
+                      Clear selection ({sel.size})
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-primary btn-sm"
+                    type="button"
+                    disabled={!selectedBulk.length}
+                    onClick={submitSelected}
+                  >
+                    Apply selected{selectedBulk.length ? ` (${selectedBulk.length})` : ''}
+                  </button>
+                </div>
+              )}
             <SheetTable
               rows={actions}
               rowKey={(a) => a.id}
               noun="actions"
+              leading={editable ? {
+                width: 36,
+                header: (
+                  <input
+                    type="checkbox"
+                    checked={allBulkableSelected}
+                    disabled={!bulkable.length}
+                    aria-label="Select all applyable actions"
+                    onChange={() => setSel(allBulkableSelected ? new Set() : new Set(bulkable.map((a) => a.id)))}
+                  />
+                ),
+                cell: (a) => tcaSyncCanBulkApply(a.kind) ? (
+                  <input
+                    type="checkbox"
+                    checked={sel.has(a.id)}
+                    aria-label={`Select ${a.assetNumber}`}
+                    onChange={() => {
+                      const next = new Set(sel);
+                      if (next.has(a.id)) next.delete(a.id);
+                      else next.add(a.id);
+                      setSel(next);
+                    }}
+                  />
+                ) : null,
+              } : undefined}
               columns={[
                 { key: 'kind', header: 'Action', value: (a) => kindLabel(a.kind), cell: (a) => kindLabel(a.kind) },
                 { key: 'foundOn', header: 'Found', value: (a) => foundOnLabel(a.foundOn), cell: (a) => foundOnLabel(a.foundOn) },
@@ -660,47 +856,41 @@ export function Scope() {
                 return null;
               }}
             />
+            </>
           )}
         </Block>
       )}
 
-      {tab === 'register' && (
+      {tab === 'combined' && (
         <Block
           className={`posting-pane g-tone ${paneTone}`}
-          kicker="Obligation and ARO Asset Listing"
-          title="Current ARO register"
-          note="Every obligation on this reporting unit, including rows created after conversion. Opening register still shows only the conversion population. Total UL, Expired UL and Remaining UL are years and leftover months. Listing figures default onto the ARO asset; change UL on the ARO Register if the retirement-cost asset life differs."
+          kicker="Combined go-forward listing"
+          title="Master TCA listing joined to the current obligation listing"
+          note="One row per current obligation, with the linked TCA fields beside it. Obligation, ARO asset and master TCA listing columns are colour-coded. TCA cost totals count each linked asset once. Opening register still shows only the conversion join."
           actions={
-            <button className="btn btn-secondary btn-sm" type="button" onClick={() => setUi({ screen: 'register', tab: '', sub: '' })}>
-              Open ARO Register
-            </button>
+            <>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
+                Export listings to Excel
+              </button>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setUi({ screen: 'register', tab: '', sub: '' })}>
+                Open ARO Register
+              </button>
+            </>
           }
         >
           {data.obligations.length === 0 ? (
-            <Empty>No obligations yet.</Empty>
+            <Empty>{goForward
+              ? 'Load the current master TCA listing and create in-scope obligations to see the merged go-forward listing.'
+              : 'Lock opening balances first. The conversion join stays on Opening register; this page shows the go-forward join after lock.'}</Empty>
           ) : (
             <SheetTable
               rows={data.obligations}
               rowKey={(o) => o.id}
-              noun="obligations"
-              columns={obligationExtractColumns({
-                events: data.events,
-                extras: extraNames,
-                classes,
-                currency: unit.currency,
-                calendarType: unit.calendarType,
-                tcaByObl: tcaByObligationId(assets, data.obligations),
-              })}
+              noun="rows"
+              columns={combinedCols}
               footer={moneyFooter(
-                obligationColumnKeys(obligationExtractColumns({
-                  events: data.events,
-                  extras: extraNames,
-                  classes,
-                  currency: unit.currency,
-                  calendarType: unit.calendarType,
-                  tcaByObl: tcaByObligationId(assets, data.obligations),
-                })),
-                obligationMoneyTotals(data.obligations, data.events),
+                combinedCols,
+                registerMoneyTotals(data.obligations, data.events, tcaByObl),
                 unit.currency,
               )}
             />

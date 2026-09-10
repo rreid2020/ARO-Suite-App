@@ -1,5 +1,5 @@
 /**
- * Go-forward sync of the current master TCA listing and the ARO register.
+ * Go-forward sync of the current master TCA listing and the current obligation listing.
  *
  * After opening lock the listing is compared both ways. New in-scope assets
  * need a linked obligation. Unproductive / Disposed TCA status must land on
@@ -271,6 +271,58 @@ export function applyUnproductiveFlags(data: UnitData, action: TcaSyncAction): s
   return n
     ? `Flagged ${n} ARO asset${n === 1 ? '' : 's'} ${productive ? 'in' : 'not in'} productive use.`
     : 'Nothing to flag.';
+}
+
+export function tcaSyncCanBulkApply(kind: TcaSyncKind): boolean {
+  return kind === 'listing-ul'
+    || kind === 'ul-mismatch'
+    || kind === 'mark-unproductive'
+    || kind === 'mark-productive';
+}
+
+export function applySelectedTcaSync(
+  data: UnitData,
+  actions: TcaSyncAction[],
+  unit: TcaSyncUnit,
+): string {
+  const listing: string[] = [];
+  const remaining: string[] = [];
+  const flags: string[] = [];
+  const skipped: string[] = [];
+  for (const action of actions) {
+    if (action.kind === 'listing-ul') {
+      const msg = applyListingExpiredUl(data, action, unit);
+      if (msg.startsWith('Corrected')) listing.push(action.assetNumber);
+      else skipped.push(`${action.assetNumber}: ${msg}`);
+      continue;
+    }
+    if (action.kind === 'ul-mismatch') {
+      const msg = applyUlFromTca(data, action, unit);
+      if (msg.startsWith('Applied')) remaining.push(action.assetNumber);
+      else skipped.push(`${action.assetNumber}: ${msg}`);
+      continue;
+    }
+    if (action.kind === 'mark-unproductive' || action.kind === 'mark-productive') {
+      const msg = applyUnproductiveFlags(data, action);
+      if (msg.startsWith('Flagged')) flags.push(action.assetNumber);
+      else skipped.push(`${action.assetNumber}: ${msg}`);
+      continue;
+    }
+    skipped.push(`${action.assetNumber}: that action needs its own form.`);
+  }
+  const bits: string[] = [];
+  if (listing.length) {
+    bits.push(`Corrected Expired UL on ${listing.length} listing row${listing.length === 1 ? '' : 's'} (${listing.join(', ')}).`);
+  }
+  if (remaining.length) {
+    bits.push(`Applied listing remaining UL on ${remaining.length} TCA${remaining.length === 1 ? '' : 's'} (${remaining.join(', ')}).`);
+  }
+  if (flags.length) {
+    bits.push(`Updated productive use on ${flags.length} TCA${flags.length === 1 ? '' : 's'} (${flags.join(', ')}).`);
+  }
+  if (!bits.length) return skipped[0] ?? 'Nothing to apply.';
+  if (skipped.length) bits.push(`${skipped.length} not applied.`);
+  return bits.join(' ');
 }
 
 export function applyListingExpiredUl(
