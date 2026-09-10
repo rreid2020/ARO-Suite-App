@@ -75,19 +75,20 @@ export function obligationCalcLines(
   ];
 }
 
-/** ARO asset statement: useful life as at the selected period, then event-ledger books. */
+/**
+ * ARO asset statement: useful life as at the selected period, then the same
+ * opening / additions / amortization / closing as the register ARO asset columns.
+ * Additions are the capitalized events (new ARO and revisions), not the
+ * provision disclosure split.
+ */
 export function assetCalcLines(o: Obligation, books: RegisterBooks, life: UsefulLife): CalcDetailLine[] {
   return [
     yearsLine('totalUl', 'Total useful life', life.totalYears),
     yearsLine('expiredUl', 'Expired useful life', life.expiredYears),
     yearsLine('remainingUl', 'Remaining useful life', life.remainingYears),
     money('opening', 'Opening ARO asset', 'Opening', books.openingArc),
-    money('additions', 'Additions', 'Activity', books.newAro),
-    money('cost', 'Change of estimate — cost adjustments', 'Activity', books.costAdjustments),
-    money('term', 'Change of estimate — term adjustments', 'Activity', books.termAdjustments),
-    money('writeOff', 'Change of estimate — write-offs', 'Activity', books.writeOffs),
-    money('mass', 'Change of estimate — year-end mass update (inflation and interest rates)', 'Activity', books.massUpdate),
-    money('amort', 'Amortization expense', 'Activity', -books.amortization),
+    money('additions', 'Additions', 'Activity', books.arcAdditions),
+    money('amort', 'Amortization', 'Activity', books.amortization),
     money('closing', 'Closing ARO asset', 'Closing', books.closingArc),
   ];
 }

@@ -20,13 +20,13 @@ describe('How to use it', () => {
     expect(resolveFirmNavId('howto')).toBe('howto');
   });
 
-  it('gives each tenant kind eight walkthrough steps on screens that kind can open', () => {
+  it('gives each tenant kind a walkthrough on screens that kind can open', () => {
+    expect(walkthroughFor('Auditor').length).toBe(8);
+    expect(walkthroughFor('Reporting entity').length).toBe(9);
     for (const kind of ['Auditor', 'Reporting entity'] as const) {
-      const steps = walkthroughFor(kind);
-      expect(steps.length, kind).toBe(8);
       expect(walkthroughGaps(kind), kind).toEqual([]);
       const allowed = new Set(stepsFor(kind).map((s) => s.id));
-      for (const step of steps) {
+      for (const step of walkthroughFor(kind)) {
         expect(allowed.has(step.screen), `${kind} ${step.screen}`).toBe(true);
       }
     }

@@ -12,26 +12,25 @@
  *
  * The default set is posted books as at a chosen fiscal year and period.
  * Opening is the prior-year closing. In-year columns are event-ledger amounts
- * through that period. Journal batches package those amounts for the GL.
+ * through that period. Post new obligations, adjustments and settlements on
+ * Transactions. Journal batches package those amounts for the GL.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit } from '../../core/authority';
-import { extraColumnKey, extraColumnName, isOpeningBalanceField, obligationColumnNames, obligationColumns, obligationField, openingLocked, patchObligationField, remainingUl, suggestedAroAssetNumber } from '../../core/openingLoad';
-import { tcaAssetStatusOf, tcaByObligationId, tcaColumnNames, tcaForObligation } from '../../core/tcaListing';
+import { extraColumnKey, extraColumnName, isOpeningBalanceField, obligationColumnNames, obligationColumns, obligationField, openingLocked, patchObligationField, remainingUl } from '../../core/openingLoad';
+import { tcaAssetStatusOf, tcaByObligationId, tcaColumnNames } from '../../core/tcaListing';
 import { classCodeOf, classKey, classNameOf, findAssetClass } from '../../core/assetClass';
-import { formatUl, evaluateNewAroLifeDraft, nextUlDraftFromTca, parseUlYears, suggestedSettlementDate, ulAlignmentPending, usefulLifeAsAt, termToSettlementAtYearStart, withSettlementFromRemaining } from '../../core/usefulLife';
+import { formatUl, parseUlYears, ulAlignmentPending, usefulLifeAsAt, termToSettlementAtYearStart } from '../../core/usefulLife';
 import { fiscalYearStart } from '../../core/periods';
-import { postNewAro } from '../../core/inYear';
 import { assetBooks, openPeriod, type AssetBooks } from '../../core/periodClose';
 import { registerBooksById, unpostedInYearCount, type RegisterBooks } from '../../core/registerBooks';
-import { Obligation, TcaAsset, type EstimateColumn } from '../../core/types';
-import { isValidDate, maskDateInput, priorYearEnd } from '../../engine/dates';
+import { Obligation, TcaAsset } from '../../core/types';
+import { isValidDate } from '../../engine/dates';
 import { SCOPING_REASONS, VARIANCE_CAUSES } from '../../seed';
-import { Block, Field, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields, UlYmInputs, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, num, parseNumber, pct, SheetStatus, SheetTable, SheetTh, Stats, Tag, useSheet } from '../components';
-import type { EstimateLineDraft, EstimateMode } from '../components';
+import { Block, UlYmInputs, currency, num, parseNumber, pct, SheetStatus, SheetTable, SheetTh, Stats, Tag, useSheet } from '../components';
 import { SheetFilter } from '../sheet';
 import { download, S } from '../../xlsx/write';
 import { groupToneClass } from '../groupTone';
@@ -144,7 +143,7 @@ const COLUMN_SETS: Record<string, string[]> = {
 const PAGE = 25;
 
 export function Register() {
-  const { state, ui, write, apply } = useStore();
+  const { state, ui, write, apply, setUi } = useStore();
   const unit = useUnit();
   const data = useUnitData();
   const derived = useDerived();
@@ -157,17 +156,8 @@ export function Register() {
   const [views, setViews] = useState<{ name: string; set: string; filter: string; sort: { key: string; dir: 1 | -1 } | null; colFilters: Record<string, SheetFilter> }[]>([]);
   const [bulk, setBulk] = useState<{ key: string; value: string } | null>(null);
   const [pasteReport, setPasteReport] = useState<string[] | null>(null);
-  const [newAroOpen, setNewAroOpen] = useState(false);
-  const [pendingRef, setPendingRef] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const open = openPeriod(data ?? { periods: [] });
-  const [newAro, setNewAro] = useState({
-    ref: '', description: '', costEstimateDate: unit ? priorYearEnd(unit.fyEnd) : '',
-    settlementDate: '', aroseOn: open?.ends ?? '', assetClass: '', assetId: '', aroAssetNumber: '',
-    assetAcquisitionDate: '', totalUl: '', expiredUl: '', inProductiveUse: true,
-    estimateMode: 'single' as EstimateMode, estimateLines: [emptyEstimateLine()] as EstimateLineDraft[],
-    estimateColumns: DEFAULT_ESTIMATE_COLUMNS as EstimateColumn[],
-  });
   const gridRef = useRef<HTMLTableElement>(null);
 
   const editable = canEdit(ui.role);
@@ -326,55 +316,7 @@ export function Register() {
 
   useEffect(() => { setPage(0); }, [filter, set, asAtId, sheet.filters, sheet.sort]);
 
-  useEffect(() => {
-    if (!pendingRef || !data) return;
-    const o = data.obligations.find((x) => x.ref === pendingRef);
-    if (o) {
-      setExpandedId(o.id);
-      setPendingRef(null);
-    }
-  }, [pendingRef, data]);
-
   if (!unit || !data || !derived) return null;
-
-  const createNewAro = () => {
-    const input = {
-      ref: newAro.ref,
-      description: newAro.description,
-      ...estimatePayload(newAro.estimateLines, newAro.estimateColumns),
-      costEstimateDate: newAro.costEstimateDate,
-      settlementDate: newAro.settlementDate,
-      aroseOn: newAro.aroseOn,
-      assetAcquisitionDate: newAro.assetAcquisitionDate,
-      assetClass: newAro.assetClass || undefined,
-      assetId: newAro.assetId.trim() || undefined,
-      aroAssetNumber: newAro.aroAssetNumber.trim() || undefined,
-      totalUl: newAro.totalUl.trim() === '' ? undefined : parseNumber(newAro.totalUl),
-      expiredUl: newAro.expiredUl.trim() === '' ? undefined : parseNumber(newAro.expiredUl),
-      inProductiveUse: newAro.inProductiveUse,
-    };
-    const probe = postNewAro(structuredClone(state), unit.tenantId, unit.id, input);
-    if (typeof probe === 'string') {
-      apply('Add cost estimate', 'refused', probe, () => {});
-      return;
-    }
-    const how = probe.caseId === 'expense-recognition'
-      ? `Charged to expense ${currency(probe.amount, unit.currency)}.`
-      : probe.caseId === 'catch-up-recognition'
-        ? `Provision and ARO asset ${currency(probe.amount, unit.currency)}, with catch-up amortization.`
-        : `Provision and ARO asset ${currency(probe.amount, unit.currency)}.`;
-    apply('Add cost estimate', 'write',
-      `Added ${input.ref} to the register in ${probe.periodCode}. ${how}`,
-      (s) => { postNewAro(s, unit.tenantId, unit.id, input); });
-    setNewAroOpen(false);
-    setPendingRef(input.ref.trim());
-    setNewAro({
-      ref: '', description: '', costEstimateDate: priorYearEnd(unit.fyEnd),
-      settlementDate: '', aroseOn: open?.ends ?? '', assetClass: '', assetId: '', aroAssetNumber: '',
-      assetAcquisitionDate: '', totalUl: '', expiredUl: '', inProductiveUse: true,
-      estimateMode: 'single', estimateLines: [emptyEstimateLine()], estimateColumns: DEFAULT_ESTIMATE_COLUMNS,
-    });
-  };
 
   /* ── writes ─────────────────────────────────────────────────────────── */
 
@@ -470,7 +412,7 @@ export function Register() {
     if (refused.length) {
       setPasteReport([
         `${written} written, ${refused.length} refused.`,
-        `Refused because the expected settlement date is held by a timing revision: ${refused.join(', ')}. Open the obligation and record a timing revision, rather than editing the register cell.`,
+        `Refused because the expected settlement date is held by a timing revision: ${refused.join(', ')}. Record a term adjustment on Transactions, rather than editing the register cell.`,
       ]);
     }
     setBulk(null);
@@ -657,173 +599,18 @@ export function Register() {
         </Block>
         )}
 
-      {editable && newAroOpen && (() => {
-        const linkedTca = tcaForObligation(data.tcaAssets, { assetId: newAro.assetId });
-        const listingAcq = linkedTca?.acquisitionDate ?? '';
-        const life = evaluateNewAroLifeDraft({
-          totalUlText: newAro.totalUl,
-          expiredUlText: newAro.expiredUl,
-          tca: linkedTca,
-          assetAcquisitionDate: newAro.assetAcquisitionDate,
-          costEstimateDate: newAro.costEstimateDate,
-          settlementDate: newAro.settlementDate,
-          dayCount: unit.dayCount,
-        });
-        const canPost = newAro.ref.trim()
-          && estimateHasCost(newAro.estimateLines, newAro.estimateColumns)
-          && isValidDate(newAro.assetAcquisitionDate)
-          && isValidDate(newAro.costEstimateDate)
-          && isValidDate(newAro.settlementDate)
-          && isValidDate(newAro.aroseOn)
-          && !life.issue;
-        return (
-        <Block kicker="New cost estimate" title="Add to the register"
-          note={open
-            ? `Posts in ${open.code} (${open.starts} to ${open.ends}). A remaining useful life capitalizes a retirement-cost asset. Life already expired is caught up from the asset acquisition date. A fully amortized asset not in productive use is charged to expense. Month-end accretion and amortization run later from Close → Month-end posting.`
-            : 'Open a period on Periods & close before adding a cost estimate.'}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
-            <Field label="Obligation number"><input className="input" value={newAro.ref} onChange={(e) => setNewAro({ ...newAro, ref: e.target.value })} /></Field>
-            <Field label="Description"><input className="input" value={newAro.description} onChange={(e) => setNewAro({ ...newAro, description: e.target.value })} /></Field>
-            <Field
-              label="ARO asset acquisition date"
-              help="The date the obligating event occurred. Defaults from the linked TCA's acquisition date on the master listing. Change it when the obligation arose on a different date. Catch-up amortization is PV × expired UL / total UL, measured from this date."
-              hint={!isValidDate(newAro.assetAcquisitionDate) && newAro.assetId.trim() && !linkedTca
-                ? 'That TCA asset number is not on the master listing. Enter the date the obligating event occurred.'
-                : !isValidDate(newAro.assetAcquisitionDate) && linkedTca && !isValidDate(listingAcq)
-                  ? 'No acquisition date on the master TCA listing. Enter the date the obligating event occurred.'
-                  : isValidDate(listingAcq) && newAro.assetAcquisitionDate === listingAcq
-                    ? `Defaulted from the TCA acquisition date (${listingAcq}). Change it if the obligating event occurred on a different date.`
-                    : isValidDate(listingAcq) && newAro.assetAcquisitionDate !== listingAcq
-                      ? `TCA acquisition date on the listing is ${listingAcq}.`
-                      : undefined}
-            >
-              <input className="input" value={newAro.assetAcquisitionDate} onChange={(e) => {
-                const assetAcquisitionDate = maskDateInput(e.target.value);
-                setNewAro((v) => withSettlementFromRemaining(v, { ...v, assetAcquisitionDate }, unit.dayCount, linkedTca, linkedTca));
-              }} placeholder="YYYY-MM-DD" />
-            </Field>
-            <Field
-              label="Cost estimate date"
-              help={`The price date of the cost build-up. Defaults to the prior financial year end. This year ends ${unit.fyEnd}.`}
-            >
-              <input className="input" value={newAro.costEstimateDate} onChange={(e) => {
-                const costEstimateDate = maskDateInput(e.target.value);
-                setNewAro((v) => withSettlementFromRemaining(v, { ...v, costEstimateDate }, unit.dayCount, linkedTca, linkedTca));
-              }} placeholder="YYYY-MM-DD" />
-            </Field>
-            <NewAroSettlementFields
-              settlementDate={newAro.settlementDate}
-              yearsToSettlement={life.yearsToSettlement}
-              remainingUl={life.remainingUl}
-              issue={life.issue}
-              suggested={suggestedSettlementDate(newAro.costEstimateDate, life.remainingUl, unit.dayCount)}
-              onSettlementDate={(settlementDate) => setNewAro((v) => ({ ...v, settlementDate }))}
-            />
-            <Field label="Effective date"><input className="input" value={newAro.aroseOn} onChange={(e) => setNewAro({ ...newAro, aroseOn: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" /></Field>
-            <Field label="TCA asset number" help="The related row on the master TCA listing. The ARO asset acquisition date defaults from that row's acquisition date.">
-              <input className="input" value={newAro.assetId} onChange={(e) => {
-                const assetId = e.target.value;
-                const prevTca = tcaForObligation(data.tcaAssets, { assetId: newAro.assetId });
-                const nextTca = tcaForObligation(data.tcaAssets, { assetId });
-                const prevDefault = prevTca?.acquisitionDate ?? '';
-                const nextDefault = nextTca?.acquisitionDate ?? '';
-                const keepUserDate = Boolean(newAro.assetAcquisitionDate && newAro.assetAcquisitionDate !== prevDefault);
-                const ul = nextUlDraftFromTca({
-                  formTotal: newAro.totalUl,
-                  formExpired: newAro.expiredUl,
-                  prevTca,
-                  nextTca,
-                });
-                const keepUserAro = Boolean(newAro.aroAssetNumber && newAro.aroAssetNumber !== suggestedAroAssetNumber(data.obligations, newAro.assetId));
-                setNewAro(withSettlementFromRemaining(
-                  newAro,
-                  {
-                    ...newAro,
-                    assetId,
-                    aroAssetNumber: keepUserAro ? newAro.aroAssetNumber : (assetId.trim() ? suggestedAroAssetNumber(data.obligations, assetId) : ''),
-                    assetAcquisitionDate: keepUserDate ? newAro.assetAcquisitionDate : (nextDefault || newAro.assetAcquisitionDate),
-                    totalUl: ul.totalUl,
-                    expiredUl: ul.expiredUl,
-                  },
-                  unit.dayCount,
-                  prevTca,
-                  nextTca,
-                ));
-              }} />
-            </Field>
-            <Field label="ARO asset number" help="The retirement-cost asset identifier. Distinct from the TCA asset number. Assigned from the TCA asset number when blank.">
-              <input className="input" value={newAro.aroAssetNumber} onChange={(e) => setNewAro({ ...newAro, aroAssetNumber: e.target.value })} />
-            </Field>
-            <Field label="ARO asset class code">
-              <select className="input" value={classCodeOf(newAro.assetClass, assetClasses)}
-                onChange={(e) => {
-                  const cls = findAssetClass(assetClasses, e.target.value);
-                  setNewAro({ ...newAro, assetClass: cls ? classKey(cls) : e.target.value });
-                }}>
-                {classCodes.map((n) => <option key={n || 'none'} value={n}>{n || '—'}</option>)}
-              </select>
-            </Field>
-            <Field label="ARO asset class name">
-              <select className="input" value={classNameOf(newAro.assetClass, assetClasses)}
-                onChange={(e) => {
-                  const cls = findAssetClass(assetClasses, e.target.value);
-                  setNewAro({ ...newAro, assetClass: cls ? classKey(cls) : e.target.value });
-                }}>
-                {classNames.map((n) => <option key={n || 'none'} value={n}>{n || '—'}</option>)}
-              </select>
-            </Field>
-            <NewAroLifeFields
-              totalUl={newAro.totalUl}
-              expiredUl={newAro.expiredUl}
-              tca={linkedTca}
-              assetAcquisitionDate={newAro.assetAcquisitionDate}
-              costEstimateDate={newAro.costEstimateDate}
-              settlementDate={newAro.settlementDate}
-              dayCount={unit.dayCount}
-              onTotalUl={(totalUl) => setNewAro((v) => withSettlementFromRemaining(v, { ...v, totalUl }, unit.dayCount, linkedTca, linkedTca))}
-              onExpiredUl={(expiredUl) => setNewAro((v) => withSettlementFromRemaining(v, { ...v, expiredUl }, unit.dayCount, linkedTca, linkedTca))}
-            />
-            <Field label="ARO asset in productive use" help="No, and remaining UL is nil: charge the new obligation to expense. No retirement-cost asset is capitalized.">
-              <select className="input" value={newAro.inProductiveUse ? 'Yes' : 'No'}
-                onChange={(e) => setNewAro({ ...newAro, inProductiveUse: e.target.value === 'Yes' })}>
-                <option>Yes</option>
-                <option>No</option>
-              </select>
-            </Field>
-            <NewAroEstimate
-              mode={newAro.estimateMode}
-              lines={newAro.estimateLines}
-              columns={newAro.estimateColumns}
-              currencyCode={unit.currency}
-              templates={state.settings[unit.tenantId]?.costEstimateTemplates}
-              onMode={(estimateMode) => setNewAro((v) => ({ ...v, estimateMode }))}
-              onLines={(estimateLines) => setNewAro((v) => ({ ...v, estimateLines }))}
-              onColumns={(estimateColumns) => setNewAro((v) => ({ ...v, estimateColumns }))}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button className="btn btn-primary btn-sm" onClick={createNewAro} disabled={!canPost}>
-              Add to register
-            </button>
-            <button className="btn btn-secondary btn-sm" onClick={() => setNewAroOpen(false)}>Cancel</button>
-          </div>
-        </Block>
-        );
-      })()}
-
       <Block
         kicker="Register"
         title={`${filtered.length} obligation${filtered.length === 1 ? '' : 's'}`}
         note={asAt
-          ? `As at ${asAt.code} (${asAt.starts} to ${asAt.ends}). Opening is the prior fiscal year's closing, or the conversion opening in the first year. Existing and new columns are event-ledger amounts through this period — new ARO, cost and term adjustments when you record them; accretion and amortization after month-end allocation. A period with no new postings carries the prior period's closing forward.`
+          ? `As at ${asAt.code} (${asAt.starts} to ${asAt.ends}). Opening is the prior fiscal year's closing, or the conversion opening in the first year. Existing and new columns are event-ledger amounts through this period. Post new obligations, adjustments and settlements on Transactions. Accretion and amortization follow month-end allocation. A period with no new postings carries the prior period's closing forward.`
           : 'Generate a fiscal calendar on Periods & close to view posted books as at a period.'}
         actions={
           <>
             {editable && (
-              <button className="btn btn-primary btn-sm" onClick={() => {
-                setNewAro((n) => ({ ...n, aroseOn: n.aroseOn || open?.ends || '', costEstimateDate: n.costEstimateDate || priorYearEnd(unit.fyEnd) }));
-                setNewAroOpen(true);
-              }}>New cost estimate</button>
+              <button className="btn btn-primary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'new', sub: '' })}>
+                Record a transaction
+              </button>
             )}
             <button className="btn btn-secondary btn-sm" onClick={exportXlsx}>Export to Excel</button>
             {sel.size > 0 && editable && (

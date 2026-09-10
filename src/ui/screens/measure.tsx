@@ -1,29 +1,26 @@
 /**
  * Measure phase — obligation expand on the register, layers and framework,
- * event ledger.
+ * event ledger. Cost, term and settlement posting lives on Transactions.
  */
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit, canPost } from '../../core/authority';
-import { Obligation, ReportingUnit, Revision } from '../../core/types';
-import { isValidDate, maskDateInput } from '../../engine/dates';
+import { Obligation, ReportingUnit } from '../../core/types';
 import { LEDGER_EVENT_TYPES } from '../../engine/rollforward';
 import {
   curveOptionLabel, curveRateDetail, curveSourcePoints, curveTermOf, isPublishedCurve,
   sortedPoints, type Curve, type TermConvention,
 } from '../../engine/curve';
 import { frameworkPolicy, unitDiscounts } from '../../engine/framework';
-import { postRevision } from '../../core/inYear';
 import { openPeriod, remainingDiscountTerm } from '../../core/periodClose';
 import { unitCurve } from '../../core/measure';
 import { registerBooks } from '../../core/registerBooks';
 import { assetCalcLines, obligationCalcLines, type CalcDetailLine } from '../../core/calcDetails';
 import { accretionSchedule, amortizationSchedule, type ScheduleRow } from '../../core/schedules';
 import { applyUlAlignment, dismissUlAlignment, formatUl, ulAlignmentOf, ulAlignmentPending, usefulLifeAsAt } from '../../core/usefulLife';
-import { REMEASUREMENT_REASONS } from '../../seed';
-import { Block, Empty, Field, currency, num, parseNumber, pct, SheetTable, Tag } from '../components';
+import { Block, Empty, Field, currency, num, pct, SheetTable, Tag } from '../components';
 import { groupToneClass } from '../groupTone';
 
 type ExpandTab = 'accretion' | 'curve' | 'obligation-calc' | 'adjustments' | 'amortization' | 'asset-calc';
@@ -48,7 +45,7 @@ export function ObligationExpand({
   fiscalYear: number;
   asAtPeriodId?: string;
 }) {
-  const { state, ui, apply } = useStore();
+  const { state, ui, apply, setUi } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const derived = useDerived()!;
@@ -58,9 +55,6 @@ export function ObligationExpand({
     ?? data.periods.filter((p) => p.fiscalYear === fiscalYear).sort((a, b) => a.no - b.no).at(-1)
     ?? open ?? data.periods[data.periods.length - 1];
   const [tab, setTab] = useState<ExpandTab>('accretion');
-  const [draft, setDraft] = useState<{ kind: 'cost' | 'term'; amount: string; to: string; date: string; reason: string; evidence: string }>({
-    kind: 'cost', amount: '', to: '', date: open?.ends ?? '', reason: REMEASUREMENT_REASONS[0], evidence: '',
-  });
 
   const picked = data.obligations.find((o) => o.id === obligation.id) ?? obligation;
   const d = derived.byId.get(picked.id);
@@ -78,32 +72,6 @@ export function ObligationExpand({
     () => amortizationSchedule(picked, data.events, data.periods, data.batches, unit, fiscalYear),
     [picked, data.events, data.periods, data.batches, unit, fiscalYear],
   );
-
-  const valid = isValidDate(draft.date) && (draft.kind === 'cost' ? Number.isFinite(parseNumber(draft.amount)) && draft.amount !== '' : isValidDate(draft.to));
-
-  const add = () => {
-    const rev: Revision = {
-      id: `adj-${Date.now().toString(36)}`,
-      kind: draft.kind,
-      amount: draft.kind === 'cost' ? parseNumber(draft.amount) : undefined,
-      to: draft.kind === 'term' ? draft.to : undefined,
-      date: draft.date, reason: draft.reason, evidence: draft.evidence,
-      createdBy: ui.userName, createdAt: new Date().toISOString(),
-    };
-    const probe = postRevision(structuredClone(state), unit.tenantId, unit.id, picked.id, rev, ui.userName);
-    if (typeof probe === 'string') {
-      apply(`Record ${draft.kind === 'cost' ? 'cost' : 'timing'} revision`, 'refused', probe, () => {});
-      return;
-    }
-    apply(`Record ${draft.kind === 'cost' ? 'cost' : 'timing'} revision`, 'write',
-      probe.amount === 0
-        ? `Recorded a ${draft.kind} revision on ${picked.ref} in ${probe.periodCode}. The provision did not move.`
-        : picked.inProductiveUse === false
-          ? `Posted a ${draft.kind} revision on ${picked.ref} in ${probe.periodCode} for ${currency(probe.amount, unit.currency)}. The offset goes to operating expense because the ARO asset is flagged not in productive use.`
-          : `Posted a ${draft.kind} revision on ${picked.ref} in ${probe.periodCode} for ${currency(probe.amount, unit.currency)}. The ARO asset moves with the provision.`,
-      (s) => { postRevision(s, unit.tenantId, unit.id, picked.id, rev, ui.userName); });
-    setDraft({ kind: 'cost', amount: '', to: '', date: open?.ends ?? '', reason: REMEASUREMENT_REASONS[0], evidence: '' });
-  };
 
   const reviewUl = (approve: boolean) => {
     const next = approve ? applyUlAlignment(picked, ui.userName) : dismissUlAlignment(picked, ui.userName);
@@ -201,8 +169,15 @@ export function ObligationExpand({
         <>
           <Block kicker="Revisions" title={`${picked.adj.length} revision${picked.adj.length === 1 ? '' : 's'}`}
             note={picked.inProductiveUse === false
-              ? 'A cost or term revision posts into the open period when you record it — before month-end accretion. Because this ARO asset is flagged not in productive use, future changes of estimate adjust the provision against operating expense instead of the ARO asset. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'
-              : 'A cost or term revision posts into the open period when you record it — before month-end accretion. It adjusts the provision and the ARO asset together. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'}>
+              ? 'History of cost and term adjustments already posted. Record the next one on Transactions. Because this ARO asset is flagged not in productive use, future changes of estimate adjust the provision against operating expense instead of the ARO asset. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'
+              : 'History of cost and term adjustments already posted. Record the next one on Transactions. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'}
+            actions={editable ? (
+              <>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'cost', sub: picked.id })}>Cost adjustment</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'term', sub: picked.id })}>Term adjustment</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setUi({ screen: 'transactions', tab: 'settle', sub: picked.id })}>Settlement</button>
+              </>
+            ) : undefined}>
             {picked.adj.length === 0 ? (
               <Empty>No revisions yet. Measurement is on the original build-up and settlement date.</Empty>
             ) : (
@@ -225,57 +200,6 @@ export function ObligationExpand({
               />
             )}
           </Block>
-          {editable && (
-            <Block kicker="Record" title="A cost or term revision"
-              note={open
-                ? picked.inProductiveUse === false
-                  ? `This posts into ${open.code} when you record it. Because this ARO asset is flagged not in productive use on the ARO Register, future changes of estimate go to operating expense instead of the ARO asset. Accretion and amortization run later from Close → Month-end posting.`
-                  : `This posts into ${open.code} when you record it. The ARO asset moves with the provision. Accretion and amortization run later from Close → Month-end posting.`
-                : 'Open a period on Periods & close before posting a cost or term revision.'}>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <div style={{ flex: '0 0 150px' }}>
-                  <Field label="Kind">
-                    <select className="input" value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as 'cost' | 'term' })}>
-                      <option value="cost">Cost revision</option>
-                      <option value="term">Timing revision</option>
-                    </select>
-                  </Field>
-                </div>
-                {draft.kind === 'cost' ? (
-                  <div style={{ flex: '0 0 170px' }}>
-                    <Field label="Amount (gross of contingency)" help="Added to direct cost, so contingency then applies to the revised figure. A reduction is entered as a negative.">
-                      <input className="input num" value={draft.amount}
-                        onChange={(e) => setDraft({ ...draft, amount: e.target.value })}
-                        onBlur={(e) => {
-                          const n = parseNumber(e.target.value);
-                          if (Number.isFinite(n)) setDraft((v) => ({ ...v, amount: currency(n, unit.currency) }));
-                        }} />
-                    </Field>
-                  </div>
-                ) : (
-                  <div style={{ flex: '0 0 160px' }}>
-                    <Field label="New settlement date" help="Once set, this holds the settlement date. The register will refuse a direct edit to it.">
-                      <input className="input" value={draft.to} onChange={(e) => setDraft({ ...draft, to: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" />
-                    </Field>
-                  </div>
-                )}
-                <div style={{ flex: '0 0 150px' }}>
-                  <Field label="Effective date"><input className="input" value={draft.date} onChange={(e) => setDraft({ ...draft, date: maskDateInput(e.target.value) })} placeholder="YYYY-MM-DD" /></Field>
-                </div>
-                <div style={{ flex: '1 1 200px' }}>
-                  <Field label="Reason">
-                    <select className="input" value={draft.reason} onChange={(e) => setDraft({ ...draft, reason: e.target.value })}>
-                      {REMEASUREMENT_REASONS.map((r) => <option key={r}>{r}</option>)}
-                    </select>
-                  </Field>
-                </div>
-                <div style={{ flex: '0 0 150px' }}>
-                  <Field label="Evidence reference"><input className="input" value={draft.evidence} onChange={(e) => setDraft({ ...draft, evidence: e.target.value })} /></Field>
-                </div>
-                <button className="btn btn-primary btn-sm" onClick={add} disabled={!valid}>Record revision</button>
-              </div>
-            </Block>
-          )}
         </>
       )}
 
@@ -285,7 +209,7 @@ export function ObligationExpand({
             <DetailTable
               kicker="ARO asset"
               title="Useful life and in-year movement"
-              note="Useful life is shown in years and months. Expired and remaining move as amortization is posted. Opening is the prior-year closing NBV, or the conversion NBV in year 1. Additions and changes of estimate move with the provision."
+              note="Useful life is shown in years and months. Opening, additions, amortization and closing are the same ARO asset columns as the register as at the selected period. Additions are the capitalized new ARO and revisions. Amortization appears after month-end allocation."
               rows={assetCalcLines(picked, books, life)}
               currency={unit.currency}
               calendar={unit.calendarType}

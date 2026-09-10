@@ -10,12 +10,18 @@ describe('reporting-unit navigation', () => {
     expect(resolveUnitScreen('register')).toBe('register');
   });
 
-  it('keeps cost estimates, adjustments and the ARO asset on the register', () => {
+  it('puts in-year posting on Transactions and keeps the register as the as-at books', () => {
     const measure = stepsFor('Reporting entity').filter((s) => s.phase === 'Measure').map((s) => s.id);
-    expect(measure).toEqual(['register', 'layers', 'ledger']);
-    expect(resolveUnitScreen('cost')).toBe('register');
-    expect(resolveUnitScreen('adjust')).toBe('register');
+    expect(measure).toEqual(['transactions', 'register', 'layers', 'ledger']);
+    expect(resolveUnitScreen('cost')).toBe('transactions');
+    expect(resolveUnitScreen('adjust')).toBe('transactions');
+    expect(resolveUnitScreen('settle')).toBe('transactions');
     expect(resolveUnitScreen('arc')).toBe('register');
+  });
+
+  it('does not keep a Close settlements step — settlements post on Transactions', () => {
+    expect(STEPS.some((s) => s.id === 'settle')).toBe(false);
+    expect(stepsFor('Reporting entity').filter((s) => s.phase === 'Close').map((s) => s.id)).not.toContain('settle');
   });
 
   it('puts month-end posting in Close for a reporting entity', () => {

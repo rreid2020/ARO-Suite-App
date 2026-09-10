@@ -56,8 +56,10 @@ export const STEPS: StepDef[] = [
     purpose: 'After opening lock: the current master TCA listing, the current obligation listing, the actions that keep those two listings in step, and the combined go-forward listing. Load an updated listing and compare it both ways. New assets are scoped In, Out, or Undecided; in-scope assets get a new obligation and ARO asset. Disposed TCAs retire linked ARO rows; Unproductive TCAs flag the ARO asset so later estimate changes go to expense. These changes do not rewrite the opening register.' },
 
   // ── Measure ────────────────────────────────────────────────────────────
+  { id: 'transactions', label: 'Transactions', phase: 'Measure', domain: 'estimates',
+    purpose: 'Post in-year activity into the open period: a new obligation and ARO asset, a cost adjustment, a term adjustment, or a partial or full settlement. The ARO register is the as-at books of what has already posted. Accretion and amortization run later from Month-end posting.' },
   { id: 'register', label: 'ARO register', phase: 'Measure', domain: 'register',
-    purpose: 'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period; closing is as at the period end. A period with no new postings carries the prior closing forward. Open a row to expand monthly accretion and amortization schedules, the discount curve, calculation details and adjustments.' },
+    purpose: 'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period; closing is as at the period end. A period with no new postings carries the prior closing forward. Open a row to expand monthly accretion and amortization schedules, the discount curve and calculation details. Post new obligations, adjustments and settlements on Transactions.' },
   { id: 'layers', label: 'Layers & framework', phase: 'Measure', domain: 'assumptions',
     purpose: 'How the framework in force — set on Unit settings — shapes the measurement, and the layers it produces.' },
   { id: 'recalculation', label: 'Recalculation', phase: 'Measure', domain: 'register', auditor: true, firm: false,
@@ -74,8 +76,6 @@ export const STEPS: StepDef[] = [
     purpose: 'After in-period new ARO, cost and term postings, allocate accretion and amortization for the open period as two separate runs. Opening the period is not a posting trigger.' },
   { id: 'reval', label: 'Year-end revaluation', phase: 'Close', domain: 'assumptions',
     purpose: 'Apply the closing rate table to the whole population. A change in estimate, not accretion.' },
-  { id: 'settle', label: 'Settlements', phase: 'Close', domain: 'estimates',
-    purpose: 'True-up the estimate to actual spend, then consume the provision. Full or partial. Retire the ARO asset on a full settlement, or extinguish the obligation if the related asset was sold. Map Cash to cash or AP on the posting scenario.' },
   { id: 'journals', label: 'Journals', phase: 'Close', domain: 'journals',
     purpose: 'The entries the engine emits from the event ledger, and where each one posts.' },
   { id: 'batches', label: 'Journal batches', phase: 'Close', domain: 'journals',
@@ -165,13 +165,13 @@ export function resolveFirmNavId(screen: string): string {
 
 /** Leftover reporting-unit screen ids. Recalculation compared the engine to an
  *  external source figure; this product is the source system, so that step is
- *  gone. Cost estimates, adjustments and the retirement-cost sub-ledger now
- *  expand under the register row. A persisted id opens the register rather
- *  than a second UI. */
+ *  gone. Cost estimates, adjustments and settlements now post on Transactions.
+ *  The retirement-cost sub-ledger still expands under the register row. */
 export const UNIT_SCREEN_ALIASES: Record<string, string> = {
   recalc: 'register',
-  cost: 'register',
-  adjust: 'register',
+  cost: 'transactions',
+  adjust: 'transactions',
+  settle: 'transactions',
   arc: 'register',
 };
 

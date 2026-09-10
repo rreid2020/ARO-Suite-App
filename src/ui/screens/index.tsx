@@ -18,7 +18,8 @@ import { UnitChart, UnitPosting, UnitSetup, UnitOpening } from './unitSetup';
 import { Periods, Intake, Normalise } from './prepare';
 import { Scope } from './scoping';
 import { Layers, Ledger } from './measure';
-import { Calendar, MonthEnd, Reval, Settle, Journals, Batches, Recon } from './close';
+import { Transactions } from './transactions';
+import { Calendar, MonthEnd, Reval, Journals, Batches, Recon } from './close';
 import { Rollf, Py, Sens } from './report';
 import { Freeze, Sampling, Complete, Review } from './assure';
 import { RecalcImport, RecalcSource, Recalculation, RecalcCompare, RecalcExceptions, RecalcVariance } from './recalc';
@@ -38,9 +39,8 @@ const SCREENS: Record<string, React.ComponentType> = {
   // Leftover Prepare ids: conversion and match are the old extract/match
   // flow. They open the Setup opening register rather than a second UI.
   conversion: UnitOpening, match: UnitOpening,
-  // Leftover Measure ids `recalc`, `cost`, `adjust`, `arc` resolve to register.
-  // Opening an obligation expands under the register row; there is no separate
-  // obligation screen.
+  // Leftover ids `cost`, `adjust`, `settle` resolve to Transactions.
+  // `recalc` and `arc` still open the register.
   // Prepare
   periods: Periods, intake: Intake,
   normalise: Normalise, scope: Scope,
@@ -51,9 +51,9 @@ const SCREENS: Record<string, React.ComponentType> = {
   recalculation: Recalculation, 'recalc-compare': RecalcCompare,
   'recalc-exceptions': RecalcExceptions, 'recalc-variance': RecalcVariance,
   // Measure
-  register: Register, layers: Layers, ledger: Ledger,
+  transactions: Transactions, register: Register, layers: Layers, ledger: Ledger,
   // Close
-  calendar: Calendar, 'month-end': MonthEnd, reval: Reval, settle: Settle,
+  calendar: Calendar, 'month-end': MonthEnd, reval: Reval,
   journals: Journals, batches: Batches, recon: Recon,
   // Report
   rollf: Rollf, py: Py, sens: Sens,

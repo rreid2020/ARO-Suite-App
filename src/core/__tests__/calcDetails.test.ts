@@ -75,7 +75,7 @@ describe('obligationCalcLines', () => {
 });
 
 describe('assetCalcLines', () => {
-  it('shows useful life then the asset roll-forward, which foots', () => {
+  it('shows useful life then the same ARO asset columns as the register, which foot', () => {
     const row = o();
     const events = [
       ev({ id: 'open', type: 'opening', amount: 1_000 }),
@@ -89,11 +89,31 @@ describe('assetCalcLines', () => {
     expect(byKey.totalUl.amount).toBe(25);
     expect(byKey.expiredUl.amount).toBeCloseTo(10 + 1 / 12, 4);
     expect(byKey.remainingUl.amount).toBeCloseTo(15 - 1 / 12, 4);
+    expect(byKey.opening.amount).toBe(books.openingArc);
+    expect(byKey.additions.amount).toBe(books.arcAdditions);
+    expect(byKey.amort.amount).toBe(books.amortization);
+    expect(byKey.closing.amount).toBe(books.closingArc);
     expect(byKey.opening.amount).toBe(800);
-    expect(byKey.cost.amount).toBe(50);
-    expect(byKey.amort.amount).toBe(-40);
+    expect(byKey.additions.amount).toBe(50);
+    expect(byKey.amort.amount).toBe(40);
     expect(byKey.closing.amount).toBe(810);
-    const activity = lines.filter((l) => l.group === 'Activity').reduce((s, l) => s + (l.amount ?? 0), 0);
-    expect(800 + activity).toBe(810);
+    expect((byKey.opening.amount ?? 0) + (byKey.additions.amount ?? 0) - (byKey.amort.amount ?? 0))
+      .toBe(byKey.closing.amount);
+  });
+
+  it('puts a new ARO addition onto Additions and closing, matching the register', () => {
+    const row = o({ id: 'n1', openingArc: undefined, totalUl: 30, expiredUl: 0 });
+    const events = [
+      ev({ id: 'add', obligationId: 'n1', type: 'addition', amount: 613_207.27, periodId: 'p1' }),
+    ];
+    const books = registerBooks(row, events, [p1], [], p1);
+    const life = usefulLifeAsAt(row, events, [p1], unit, p1);
+    const lines = assetCalcLines(row, books, life);
+    const byKey = Object.fromEntries(lines.map((l) => [l.key, l]));
+    expect(books.newAro).toBe(613_207.27);
+    expect(byKey.opening.amount).toBe(0);
+    expect(byKey.additions.amount).toBe(613_207.27);
+    expect(byKey.amort.amount).toBe(0);
+    expect(byKey.closing.amount).toBe(613_207.27);
   });
 });

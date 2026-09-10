@@ -1,6 +1,6 @@
 /**
  * Close phase — close calendar, month-end posting, year-end revaluation,
- * settlements, journals, journal batches, GL reconciliation.
+ * journals, journal batches, GL reconciliation. Settlements post on Transactions.
  */
 
 import React, { useMemo, useState } from 'react';
@@ -12,17 +12,14 @@ import { derive } from '../../engine/derive';
 import { frameworkPolicy } from '../../engine/framework';
 import { curveOptionLabel } from '../../engine/curve';
 import { suggestedClosingCurve } from '../../core/createUnit';
-import { Block, Empty, Field, currency, num, parseNumber, pct, SheetTable, Stats, Tag } from '../components';
+import { Block, Empty, Field, currency, num, parseNumber, SheetTable, Stats, Tag } from '../components';
 import { accountForRole, suspenseAccount } from '../../core/posting';
 import { JournalBatch, Obligation } from '../../core/types';
-import { postSettlement } from '../../core/inYear';
-import { planCaseEntries, selectPostingCase, type PostingFacts } from '../../engine/postingCases';
 import {
-  allocateMonthEnd, assetBooks, createOrFillPeriodBatch, monthEndRefusal, openPeriod, periodBatchRefusal, planMonthEnd,
-  provisionCarried, summariseByAccount,
+  allocateMonthEnd, createOrFillPeriodBatch, monthEndRefusal, openPeriod, periodBatchRefusal, planMonthEnd,
+  summariseByAccount,
   type MonthEndRun,
 } from '../../core/periodClose';
-import { usefulLifeAsAt } from '../../core/usefulLife';
 import { unitCurve } from '../../core/measure';
 
 /* ══ Close calendar ════════════════════════════════════════════════════ */
@@ -87,7 +84,7 @@ export function Calendar() {
 
   return (
     <Block kicker="Close calendar" title={`${open.code} — ${TASKS.length} tasks`}
-      note="Working-day offsets are relative to the period end. A negative offset is before it. New ARO, cost and term adjustments post when you record them. Run accretion and amortization from Month-end posting — or the Run buttons on CL-05 and CL-06 — after those postings, then create the journal batch. Ticking a row does not allocate."
+      note="Working-day offsets are relative to the period end. A negative offset is before it. New ARO, cost and term adjustments, and settlements post on Transactions. Run accretion and amortization from Month-end posting — or the Run buttons on CL-05 and CL-06 — after those postings, then create the journal batch. Ticking a row does not allocate."
       actions={<button className="btn btn-primary btn-sm" onClick={() => setUi({ screen: 'month-end', tab: '', sub: '' })}>Open month-end posting</button>}>
       <SheetTable
         rows={TASKS.map(([ref, label, wd, owner]) => ({ ref, label, wd, owner }))}
@@ -147,7 +144,7 @@ export function MonthEnd() {
 
   return (
     <Block kicker="Month-end posting" title={open ? `${open.code} — ${open.starts} to ${open.ends}` : 'No period is open'}
-      note="Opening a period and assigning a curve does not post anything. During the month, new ARO, cost adjustments and term adjustments post when you record them. At month end, after those, allocate accretion and amortization here as two separate runs. Then create a journal batch — that packages the ledger; it does not invent these runs.">
+      note="Opening a period and assigning a curve does not post anything. During the month, new ARO, cost adjustments, term adjustments and settlements post on Transactions. At month end, after those, allocate accretion and amortization here as two separate runs. Then create a journal batch — that packages the ledger; it does not invent these runs.">
       {!open ? (
         <Empty>Open a period on Periods & close first. Month-end posting writes into the Open period only.</Empty>
       ) : (
@@ -331,162 +328,6 @@ export function Reval() {
           )}
         </div>
       </Block>
-    </>
-  );
-}
-
-/* ══ Settlements ═══════════════════════════════════════════════════════ */
-
-export function Settle() {
-  const { state, ui, apply } = useStore();
-  const unit = useUnit()!;
-  const data = useUnitData()!;
-  const open = openPeriod(data);
-  const [draft, setDraft] = useState({
-    obligationId: '', pct: '100', actualCost: '', settledOn: '',
-    disposeAroAsset: false, relatedAssetSold: false,
-  });
-  const target = data.obligations.find((o) => o.id === draft.obligationId) ?? data.obligations[0];
-  const share = Math.min(1, Math.max(0, Number(draft.pct) / 100));
-  const actual = parseNumber(draft.actualCost) || 0;
-  const preview = (() => {
-    if (!target || !open) return null;
-    const carried = provisionCarried(data.events, data.periods, target.id, open);
-    const books = assetBooks(data.events, data.periods, target, open);
-    const life = usefulLifeAsAt(target, data.events, data.periods, unit, open, true);
-    const facts: PostingFacts = draft.relatedAssetSold
-      ? {
-          kind: 'sale',
-          remainingUlYears: life.remainingYears,
-          expiredUlYears: life.expiredYears,
-          totalUlYears: life.totalYears,
-          assetNbv: books.nbv,
-          assetGross: books.gross,
-          assetAccum: books.accum,
-          settlement: { share: 1, actualCost: 0, provisionCarried: carried, disposeAsset: true },
-        }
-      : {
-          kind: 'settlement',
-          remainingUlYears: life.remainingYears,
-          expiredUlYears: life.expiredYears,
-          totalUlYears: life.totalYears,
-          assetNbv: books.nbv,
-          assetGross: books.gross,
-          assetAccum: books.accum,
-          settlement: {
-            share,
-            actualCost: actual,
-            provisionCarried: carried,
-            disposeAsset: draft.disposeAroAsset && share >= 1 - 1e-9,
-          },
-        };
-    const posted = selectPostingCase(facts);
-    return { posted, planned: planCaseEntries(posted, facts), carried };
-  })();
-
-  return (
-    <>
-      <Block kicker="Settlements" title={`${data.settlements.length} recorded`}
-        note="True-up the estimate to actual spend, then consume the provision. Cash can be mapped to cash or AP on the posting scenario. Sale of the related asset extinguishes the obligation; proceeds on the TCA are the organisation's PPE journal, not this engine.">
-        {data.settlements.length === 0 ? (
-          <Empty>No settlements recorded in this year.</Empty>
-        ) : (
-          <SheetTable
-            rows={data.settlements.map((s) => ({
-              s,
-              ref: data.obligations.find((o) => o.id === s.obligationId)?.ref,
-            }))}
-            rowKey={(row) => row.s.id}
-            noun="settlements"
-            columns={[
-              { key: 'obligation', header: 'Obligation', value: (row) => row.ref, cell: (row) => row.ref },
-              { key: 'kind', header: 'Kind', value: (row) => row.s.relatedAssetSold ? 'Sale' : row.s.kind, cell: (row) => row.s.relatedAssetSold ? 'Sale' : row.s.kind },
-              { key: 'share', header: 'Share', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.s.pct, cell: (row) => pct(row.s.pct) },
-              { key: 'actual', header: 'Actual cost', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.s.actualCost, cell: (row) => row.s.relatedAssetSold ? '—' : currency(row.s.actualCost, unit.currency) },
-              { key: 'retire', header: 'Retire ARO asset', value: (row) => row.s.disposeAroAsset ? 'Yes' : 'No', cell: (row) => row.s.disposeAroAsset ? 'Yes' : '—' },
-              { key: 'settled', header: 'Settled', kind: 'date', value: (row) => row.s.settledOn, cell: (row) => row.s.settledOn },
-              { key: 'posted', header: 'On ledger', value: (row) => row.s.posted ? 'Yes' : 'No', cell: (row) => row.s.posted ? <Tag kind="accent">On ledger</Tag> : <Tag kind="warn">Draft</Tag> },
-            ]}
-          />
-        )}
-      </Block>
-
-      {canEdit(ui.role) && target && (
-        <Block kicker="Record" title="A settlement">
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ flex: '1 1 280px' }}>
-              <Field label="Obligation">
-                <select className="input" value={target.id} onChange={(e) => setDraft({ ...draft, obligationId: e.target.value })}>
-                  {data.obligations.map((o) => <option key={o.id} value={o.id}>{o.ref} — {o.description}</option>)}
-                </select>
-              </Field>
-            </div>
-            <div style={{ flex: '0 0 110px' }}>
-              <Field label="Share settled (%)"><input className="input num" value={draft.pct} onChange={(e) => setDraft({ ...draft, pct: e.target.value })} disabled={draft.relatedAssetSold} /></Field>
-            </div>
-            {!draft.relatedAssetSold && (
-              <div style={{ flex: '0 0 150px' }}>
-                <Field label="Actual cost"><input className="input num" value={draft.actualCost}
-                  onChange={(e) => setDraft({ ...draft, actualCost: e.target.value })}
-                  onBlur={(e) => {
-                    const n = parseNumber(e.target.value);
-                    if (Number.isFinite(n)) setDraft((d) => ({ ...d, actualCost: currency(n, unit.currency) }));
-                  }} /></Field>
-              </div>
-            )}
-            <div style={{ flex: '0 0 150px' }}>
-              <Field label="Settled on"><input className="input" type="date" value={draft.settledOn} onChange={(e) => setDraft({ ...draft, settledOn: e.target.value })} /></Field>
-            </div>
-            <div style={{ flex: '0 0 180px' }}>
-              <Field label="Related TCA sold">
-                <select className="input" value={draft.relatedAssetSold ? 'Yes' : 'No'}
-                  onChange={(e) => setDraft({ ...draft, relatedAssetSold: e.target.value === 'Yes', disposeAroAsset: e.target.value === 'Yes' ? true : draft.disposeAroAsset })}>
-                  <option>No</option>
-                  <option>Yes</option>
-                </select>
-              </Field>
-            </div>
-            {!draft.relatedAssetSold && Number(draft.pct) >= 100 && (
-              <div style={{ flex: '0 0 200px' }}>
-                <Field label="Retire the ARO asset">
-                  <select className="input" value={draft.disposeAroAsset ? 'Yes' : 'No'}
-                    onChange={(e) => setDraft({ ...draft, disposeAroAsset: e.target.value === 'Yes' })}>
-                    <option>No</option>
-                    <option>Yes</option>
-                  </select>
-                </Field>
-              </div>
-            )}
-            <button className="btn btn-primary btn-sm"
-              disabled={!draft.settledOn || (!draft.relatedAssetSold && !draft.actualCost)}
-              onClick={() => {
-                const input = {
-                  obligationId: target.id,
-                  pct: share,
-                  actualCost: actual,
-                  settledOn: draft.settledOn,
-                  disposeAroAsset: draft.disposeAroAsset,
-                  relatedAssetSold: draft.relatedAssetSold,
-                };
-                const probe = postSettlement(structuredClone(state), unit.tenantId, unit.id, input);
-                if (typeof probe === 'string') {
-                  apply('Record settlement', 'refused', probe, () => {});
-                  return;
-                }
-                apply('Record settlement', 'write',
-                  `Recorded a ${input.relatedAssetSold ? 'sale' : input.pct >= 1 ? 'full' : 'partial'} settlement of ${target.ref} in ${probe.periodCode} (${probe.caseId}).`,
-                  (s) => { postSettlement(s, unit.tenantId, unit.id, input); });
-              }}>Record</button>
-          </div>
-          {preview && (actual > 0 || draft.relatedAssetSold) && (
-            <div className="note-panel" style={{ marginTop: 12 }}>
-              {preview.posted.label}. Provision carried {currency(preview.carried, unit.currency)}.
-              {preview.planned.map((p) => ` ${p.eventType} ${currency(p.amount, unit.currency)}.`).join('')}
-              {' '}Map debit and credit roles on Posting rules; assign this organisation's GLs on the posting scenario.
-            </div>
-          )}
-        </Block>
-      )}
     </>
   );
 }

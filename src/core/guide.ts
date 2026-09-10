@@ -201,7 +201,7 @@ const AUDITOR: Guide = {
 const FIRM: Guide = {
   kicker: 'ARO Suite',
   intro: [
-    'This product is the module of record for asset retirement obligations — not a recalculation against a figure some other system reported. Cost estimates, revisions, accretion, settlement and disclosure all live on the register for the reporting unit you have open.',
+    'This product is the module of record for asset retirement obligations — not a recalculation against a figure some other system reported. In-year postings happen on Transactions; the register is the as-at books for the reporting unit you have open.',
     'Company setup names the entity, the people and the reference data. Open a reporting unit to finish measurement, chart, posting and the opening register before Prepare.',
   ],
   pillars: [
@@ -230,7 +230,7 @@ const FIRM: Guide = {
     },
     {
       title: 'Measure',
-      body: 'The ARO register is opening, in-year postings through the selected period, and closing. Open a row for schedules, the curve and calculation details.',
+      body: 'Transactions posts new obligations, cost and term adjustments, and settlements into the open period. The ARO register is the as-at books. Open a row for schedules and calculation details.',
     },
     {
       title: 'Close',
@@ -260,10 +260,10 @@ const FIRM: Guide = {
     },
     {
       id: 'register',
-      title: '3. Read the register',
+      title: '3. Post transactions, then read the register',
       body: [
-        'Select a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period — new ARO when you record it, accretion after month-end allocation. Closing is as at the period end.',
-        'Open a row to expand monthly accretion and amortization, the discount curve, calculation details and adjustments. Cost estimates, revisions and the ARO asset live on the row — there is not a second screen for them.',
+        'On Transactions, post a new obligation and ARO asset, a cost or term adjustment, or a partial or full settlement into the open period.',
+        'Then read the ARO register as at a fiscal year and period. Opening is the prior-year closing; in-year columns are event-ledger amounts through that period. Open a row for monthly schedules and calculation details.',
       ],
     },
     {
@@ -320,6 +320,11 @@ const FIRM: Guide = {
       title: 'ARO scoping',
       body: 'Current master TCA listing, current obligation listing, actions to keep the two in step, then the combined go-forward listing.',
       screen: 'scope',
+    },
+    {
+      title: 'Transactions',
+      body: 'Post a new obligation and ARO asset, a cost or term adjustment, or a partial or full settlement into the open period.',
+      screen: 'transactions',
     },
     {
       title: 'ARO register',
