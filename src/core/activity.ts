@@ -59,7 +59,7 @@ export function existedAtOpening(o: Obligation, events: ObligationEvent[], openi
 
 export type EstimateKind = 'cost' | 'term' | 'writeOff' | 'mass';
 
-function matchedRevision(o: Obligation, e: ObligationEvent) {
+export function matchedRevision(o: Obligation, e: ObligationEvent) {
   const adjs = o.adj ?? [];
   return adjs.find((a) => e.id.endsWith(`-rev-${a.id}`) || e.id.endsWith(`-${a.id}`))
     ?? adjs.find((a) => a.date === e.date && (
@@ -77,6 +77,25 @@ export function classifyRevisionEvent(o: Obligation, e: ObligationEvent): Estima
   if (WRITE_OFF.test(reason)) return 'writeOff';
   if (adj?.kind === 'term' || /term adjustment/i.test(note)) return 'term';
   return 'cost';
+}
+
+export type TxHistoryKind = 'cost' | 'term' | 'settle';
+
+function byDate(events: ObligationEvent[]): ObligationEvent[] {
+  return [...events].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+}
+
+/** Posted in-year events that make up one obligation’s cost, term or settlement history. */
+export function txHistoryEvents(o: Obligation, events: ObligationEvent[], kind: TxHistoryKind): ObligationEvent[] {
+  const mine = events.filter((e) => e.obligationId === o.id);
+  if (kind === 'settle') {
+    return byDate(mine.filter((e) => e.type === 'settlement' || e.type === 'disposal'));
+  }
+  return byDate(mine.filter((e) => {
+    if (kind === 'cost' && e.type === 'downward-excess') return true;
+    if (e.type !== 'revision' && e.type !== 'revision-unproductive') return false;
+    return classifyRevisionEvent(o, e) === kind;
+  }));
 }
 
 function sum(events: ObligationEvent[], type: ObligationEvent['type'], ids?: Set<string>): number {

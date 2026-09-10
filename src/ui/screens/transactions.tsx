@@ -22,10 +22,12 @@ import {
 } from '../../core/usefulLife';
 import { isValidDate, maskDateInput, priorYearEnd } from '../../engine/dates';
 import { planCaseEntries, selectPostingCase, type PostingFacts } from '../../engine/postingCases';
-import { Revision } from '../../core/types';
+import { matchedRevision, txHistoryEvents, type TxHistoryKind } from '../../core/activity';
+import { journalBatchForEvent } from '../../core/registerBooks';
+import { Obligation, Revision } from '../../core/types';
 import { REMEASUREMENT_REASONS } from '../../seed';
 import {
-  Block, Empty, Field, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields,
+  Block, Empty, Field, JournalRef, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields,
   DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload,
   parseNumber, pct, SheetTable, Stats, Tag,
 } from '../components';
@@ -117,7 +119,7 @@ export function Transactions() {
       </Block>
 
       <Block kicker={open ? open.code : 'Ledger'} title={`${periodEvents.length} in-period posting${periodEvents.length === 1 ? '' : 's'}`}
-        note="New ARO, cost and term adjustments, and settlements recorded in the open period. Month-end accretion and amortization are allocated separately.">
+        note="New ARO, cost and term adjustments, and settlements recorded in the open period. Click a JV# to open the journal batch. Month-end accretion and amortization are allocated separately.">
         {periodEvents.length === 0 ? (
           <Empty>Nothing posted in this period yet.</Empty>
         ) : (
@@ -135,6 +137,11 @@ export function Transactions() {
               {
                 key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num',
                 value: (row) => row.e.amount, cell: (row) => currency(row.e.amount, unit.currency),
+              },
+              {
+                key: 'jv', header: 'JV#',
+                value: (row) => journalBatchForEvent(row.e.id, data.batches)?.number ?? '',
+                cell: (row) => <JournalRef eventId={row.e.id} batches={data.batches} />,
               },
               { key: 'note', header: 'Note', value: (row) => row.e.note ?? '', cell: (row) => row.e.note || <span className="muted">—</span> },
             ]}
@@ -347,12 +354,87 @@ export function NewObligationForm() {
   );
 }
 
+/** Posted events for one obligation and transaction kind, with posting JV# links. */
+export function TxEventHistory({
+  obligation, kind,
+}: {
+  obligation: Obligation;
+  kind: TxHistoryKind;
+}) {
+  const unit = useUnit()!;
+  const data = useUnitData()!;
+  const events = useMemo(
+    () => txHistoryEvents(obligation, data.events, kind),
+    [obligation, data.events, kind],
+  );
+  const periodOf = (id: string) => data.periods.find((p) => p.id === id)?.code ?? id;
+  const noun = kind === 'settle' ? 'settlements' : kind === 'cost' ? 'cost adjustments' : 'term adjustments';
+  const title = kind === 'settle' ? 'Settlement history' : kind === 'cost' ? 'Cost adjustment history' : 'Term adjustment history';
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className="kicker" style={{ marginBottom: 8 }}>{title}</div>
+      {events.length === 0 ? (
+        <Empty>No {noun} posted on this obligation yet.</Empty>
+      ) : (
+        <SheetTable
+          rows={events}
+          rowKey={(e) => e.id}
+          noun={noun}
+          footer={
+            <tr>
+              <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Total</td>
+              <td />
+              <td />
+              <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>
+                {currency(events.reduce((s, e) => s + e.amount, 0), unit.currency)}
+              </td>
+              <td />
+              <td />
+              <td />
+            </tr>
+          }
+          columns={[
+            { key: 'date', header: 'Date', kind: 'date', value: (e) => e.date, cell: (e) => e.date },
+            { key: 'period', header: 'Period', value: (e) => periodOf(e.periodId), cell: (e) => periodOf(e.periodId) },
+            { key: 'type', header: 'Type', value: (e) => e.type, cell: (e) => <Tag kind="neutral">{e.type}</Tag> },
+            {
+              key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num',
+              value: (e) => e.amount, cell: (e) => currency(e.amount, unit.currency),
+            },
+            {
+              key: 'jv', header: 'JV#',
+              value: (e) => journalBatchForEvent(e.id, data.batches)?.number ?? '',
+              cell: (e) => <JournalRef eventId={e.id} batches={data.batches} />,
+            },
+            {
+              key: 'reason', header: 'Reason',
+              value: (e) => matchedRevision(obligation, e)?.reason ?? e.note ?? '',
+              cell: (e) => {
+                const adj = matchedRevision(obligation, e);
+                return adj?.reason || e.note || <span className="muted">—</span>;
+              },
+            },
+            {
+              key: 'evidence', header: 'Evidence',
+              value: (e) => matchedRevision(obligation, e)?.evidence ?? '',
+              cell: (e) => {
+                const adj = matchedRevision(obligation, e);
+                return adj?.evidence || <span className="muted">—</span>;
+              },
+            },
+          ]}
+        />
+      )}
+    </div>
+  );
+}
+
 export function RevisionForm({
-  kind, lockObligationId, embedded,
+  kind, lockObligationId,
 }: {
   kind: 'cost' | 'term';
   lockObligationId?: string;
-  embedded?: boolean;
 }) {
   const { state, ui, apply } = useStore();
   const unit = useUnit()!;
@@ -454,36 +536,15 @@ export function RevisionForm({
         </div>
         <button className="btn btn-primary btn-sm" onClick={submit} disabled={!valid || !picked}>Record {kind === 'cost' ? 'cost' : 'term'} adjustment</button>
       </div>
-      {!embedded && picked && picked.adj.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <SheetTable
-            rows={[...picked.adj].sort((a, b) => a.date.localeCompare(b.date))}
-            rowKey={(a) => a.id}
-            noun="revisions"
-            columns={[
-              { key: 'kind', header: 'Kind', value: (a) => a.kind === 'cost' ? 'Cost' : 'Timing', cell: (a) => (
-                <Tag kind={a.kind === 'cost' ? 'accent' : 'neutral'}>{a.kind === 'cost' ? 'Cost' : 'Timing'}</Tag>
-              ) },
-              {
-                key: 'effect', header: 'Effect', thClassName: 'num', tdClassName: 'num',
-                value: (a) => a.kind === 'cost' ? (a.amount ?? 0) : a.to,
-                cell: (a) => a.kind === 'cost' ? currency(a.amount ?? 0, unit.currency) : `→ ${a.to}`,
-              },
-              { key: 'effective', header: 'Effective', kind: 'date', value: (a) => a.date, cell: (a) => a.date },
-              { key: 'reason', header: 'Reason', value: (a) => a.reason, cell: (a) => a.reason },
-            ]}
-          />
-        </div>
-      )}
+      {picked && !lockObligationId && <TxEventHistory obligation={picked} kind={kind} />}
     </>
   );
 }
 
 export function SettlementForm({
-  lockObligationId, embedded,
+  lockObligationId,
 }: {
   lockObligationId?: string;
-  embedded?: boolean;
 }) {
   const { state, ui, apply } = useStore();
   const unit = useUnit()!;
@@ -621,35 +682,7 @@ export function SettlementForm({
         </div>
       )}
 
-      {!embedded && (
-      <div style={{ marginTop: 18 }}>
-        <div className="kicker" style={{ marginBottom: 8 }}>{data.settlements.length} settlement{data.settlements.length === 1 ? '' : 's'} recorded</div>
-        {data.settlements.length === 0 ? (
-          <Empty>No settlements recorded yet.</Empty>
-        ) : (
-          <SheetTable
-            rows={data.settlements.map((s) => ({
-              s,
-              ref: data.obligations.find((o) => o.id === s.obligationId)?.ref,
-            }))}
-            rowKey={(row) => row.s.id}
-            noun="settlements"
-            columns={[
-              { key: 'obligation', header: 'Obligation', value: (row) => row.ref, cell: (row) => row.ref },
-              { key: 'kind', header: 'Kind', value: (row) => row.s.relatedAssetSold ? 'Sale' : row.s.kind, cell: (row) => row.s.relatedAssetSold ? 'Sale' : row.s.kind },
-              { key: 'share', header: 'Share', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.s.pct, cell: (row) => pct(row.s.pct) },
-              {
-                key: 'actual', header: 'Actual cost', kind: 'number', thClassName: 'num', tdClassName: 'num',
-                value: (row) => row.s.actualCost,
-                cell: (row) => row.s.relatedAssetSold ? '—' : currency(row.s.actualCost, unit.currency),
-              },
-              { key: 'retire', header: 'Retire ARO asset', value: (row) => row.s.disposeAroAsset ? 'Yes' : 'No', cell: (row) => row.s.disposeAroAsset ? 'Yes' : '—' },
-              { key: 'settled', header: 'Settled', kind: 'date', value: (row) => row.s.settledOn, cell: (row) => row.s.settledOn },
-            ]}
-          />
-        )}
-      </div>
-      )}
+      {target && !lockObligationId && <TxEventHistory obligation={target} kind="settle" />}
     </>
   );
 }

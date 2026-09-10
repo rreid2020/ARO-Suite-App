@@ -21,19 +21,18 @@ import { journalBatchForEvent, registerBooks } from '../../core/registerBooks';
 import { assetCalcLines, calcLineDrillable, calcLineSource, obligationCalcLines, type CalcDetailLine } from '../../core/calcDetails';
 import { accretionSchedule, amortizationSchedule, type ScheduleRow } from '../../core/schedules';
 import { applyUlAlignment, dismissUlAlignment, formatUl, ulAlignmentOf, ulAlignmentPending, usefulLifeAsAt } from '../../core/usefulLife';
-import { Block, Empty, Field, currency, num, pct, SheetTable, Tag } from '../components';
+import { Block, Empty, Field, JournalRef, currency, num, pct, SheetTable, Tag } from '../components';
 import { groupToneClass } from '../groupTone';
-import { RevisionForm, SettlementForm } from './transactions';
+import { RevisionForm, SettlementForm, TxEventHistory } from './transactions';
 import type { ObligationEvent } from '../../engine/rollforward';
 import type { Period } from '../../core/periods';
 
-type ExpandTab = 'accretion' | 'curve' | 'obligation-calc' | 'adjustments' | 'amortization' | 'asset-calc' | 'tx-cost' | 'tx-term' | 'tx-settle';
+type ExpandTab = 'accretion' | 'curve' | 'obligation-calc' | 'amortization' | 'asset-calc' | 'tx-cost' | 'tx-term' | 'tx-settle';
 
 const OBLIGATION_TABS: { id: ExpandTab; label: string }[] = [
   { id: 'accretion', label: 'Monthly accretion schedule' },
   { id: 'curve', label: 'Discount curve' },
   { id: 'obligation-calc', label: 'Obligation calculation details' },
-  { id: 'adjustments', label: 'Adjustments' },
 ];
 
 const ASSET_TABS: { id: ExpandTab; label: string }[] = [
@@ -191,44 +190,6 @@ export function ObligationExpand({
           : <Empty>Generate a fiscal calendar on Periods & close to see this calculation.</Empty>
       )}
 
-      {tab === 'adjustments' && (
-        <>
-          <Block kicker="Revisions" title={`${picked.adj.length} revision${picked.adj.length === 1 ? '' : 's'}`}
-            note={picked.inProductiveUse === false
-              ? 'History of cost and term adjustments already posted. Record the next one under Transactions on this row. Because this ARO asset is flagged not in productive use, future changes of estimate adjust the provision against operating expense instead of the ARO asset. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'
-              : 'History of cost and term adjustments already posted. Record the next one under Transactions on this row. A timing revision holds the settlement date, so the register will refuse a direct edit to it.'}
-            actions={editable ? (
-              <>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => setTab('tx-cost')}>Cost adjustment</button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTab('tx-term')}>Term adjustment</button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTab('tx-settle')}>Settlement</button>
-              </>
-            ) : undefined}>
-            {picked.adj.length === 0 ? (
-              <Empty>No revisions yet. Measurement is on the original build-up and settlement date.</Empty>
-            ) : (
-              <SheetTable
-                rows={[...picked.adj].sort((a, b) => a.date.localeCompare(b.date))}
-                rowKey={(a) => a.id}
-                noun="revisions"
-                columns={[
-                  { key: 'kind', header: 'Kind', value: (a) => a.kind === 'cost' ? 'Cost' : 'Timing', cell: (a) => (
-                    <Tag kind={a.kind === 'cost' ? 'accent' : 'neutral'}>{a.kind === 'cost' ? 'Cost' : 'Timing'}</Tag>
-                  ) },
-                  { key: 'effect', header: 'Effect', thClassName: 'num', tdClassName: 'num',
-                    value: (a) => a.kind === 'cost' ? (a.amount ?? 0) : a.to,
-                    cell: (a) => a.kind === 'cost' ? currency(a.amount ?? 0, unit.currency) : `→ ${a.to}` },
-                  { key: 'effective', header: 'Effective', kind: 'date', value: (a) => a.date, cell: (a) => a.date },
-                  { key: 'reason', header: 'Reason', value: (a) => a.reason, cell: (a) => a.reason },
-                  { key: 'evidence', header: 'Evidence', value: (a) => a.evidence || 'none recorded', cell: (a) => a.evidence || <span className="muted">none recorded</span> },
-                  { key: 'by', header: 'Recorded by', value: (a) => a.createdBy, tdClassName: 'muted', cell: (a) => a.createdBy },
-                ]}
-              />
-            )}
-          </Block>
-        </>
-      )}
-
       {tab === 'asset-calc' && (
         books
           ? (
@@ -252,13 +213,19 @@ export function ObligationExpand({
       )}
 
       {(tab === 'tx-cost' || tab === 'tx-term' || tab === 'tx-settle') && (
-        !open
-          ? <Empty>Open a period on Periods & close before posting in-year transactions.</Empty>
-          : !editable
-            ? <Empty>This role cannot post in-year transactions.</Empty>
-            : tab === 'tx-settle'
-              ? <SettlementForm lockObligationId={picked.id} embedded />
-              : <RevisionForm kind={tab === 'tx-cost' ? 'cost' : 'term'} lockObligationId={picked.id} embedded />
+        <>
+          {!open
+            ? <Empty>Open a period on Periods & close before posting in-year transactions.</Empty>
+            : !editable
+              ? <Empty>This role cannot post in-year transactions.</Empty>
+              : tab === 'tx-settle'
+                ? <SettlementForm lockObligationId={picked.id} />
+                : <RevisionForm kind={tab === 'tx-cost' ? 'cost' : 'term'} lockObligationId={picked.id} />}
+          <TxEventHistory
+            obligation={picked}
+            kind={tab === 'tx-settle' ? 'settle' : tab === 'tx-cost' ? 'cost' : 'term'}
+          />
+        </>
       )}
     </div>
   );
@@ -282,7 +249,6 @@ function DetailTable({
   batches: JournalBatch[];
   asAt: Period;
 }) {
-  const { setUi } = useStore();
   const [openKey, setOpenKey] = useState<string | null>(null);
 
   return (
@@ -339,7 +305,6 @@ function DetailTable({
             return <Empty>{source.emptyNote ?? 'No posted events on this line through the selected period.'}</Empty>;
           }
           const periodOf = (id: string) => periods.find((p) => p.id === id)?.code ?? id;
-          const jvOf = (id: string) => journalBatchForEvent(id, batches);
           return (
             <>
               {source.note ? <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5 }}>{source.note}</p> : null}
@@ -369,19 +334,8 @@ function DetailTable({
                   },
                   {
                     key: 'jv', header: 'JV#',
-                    value: (e) => jvOf(e.id)?.number ?? '',
-                    cell: (e) => {
-                      const batch = jvOf(e.id);
-                      if (!batch) return <span className="muted">—</span>;
-                      return (
-                        <button type="button" className="btn btn-ghost btn-sm"
-                          aria-label={`Open journal batch ${batch.number}`}
-                          style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, paddingLeft: 0, paddingRight: 0, textDecoration: 'underline', textUnderlineOffset: 3 }}
-                          onClick={() => setUi({ screen: 'batches', tab: '', sub: batch.id })}>
-                          {batch.number}
-                        </button>
-                      );
-                    },
+                    value: (e) => journalBatchForEvent(e.id, batches)?.number ?? '',
+                    cell: (e) => <JournalRef eventId={e.id} batches={batches} />,
                   },
                   { key: 'note', header: 'Note', value: (e) => e.note ?? '', cell: (e) => e.note || <span className="muted">—</span> },
                 ]}

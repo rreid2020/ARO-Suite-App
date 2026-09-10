@@ -15,6 +15,7 @@ import { DAY_COUNTS, maskDateInput } from '../../engine/dates';
 export { SheetTable, SheetTh, SheetStatus, useSheet } from './Sheet';
 export type { SheetColumn } from './Sheet';
 export { AccountPicker } from './AccountPicker';
+export { JournalRef } from '../JournalRef';
 export { Walkthrough } from './Walkthrough';
 export {
   NewAroEstimate,

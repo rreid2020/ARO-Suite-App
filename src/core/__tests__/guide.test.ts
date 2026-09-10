@@ -69,10 +69,11 @@ describe('How to use it', () => {
     const section = guide.sections.find((s) => s.id === 'register');
     expect(section?.title).toMatch(/register or on Transactions/i);
     expect(section?.body.join(' ')).toMatch(/Transactions tabs/i);
+    expect(section?.body.join(' ')).toMatch(/posting JV#/i);
     expect(section?.body.join(' ')).toMatch(/calculation-details line/i);
     const registerStep = walkthroughFor('Reporting entity').find((s) => s.screen === 'register');
     expect(registerStep?.body).toMatch(/calculation-details line/i);
-    expect(registerStep?.body).toMatch(/cost or term adjustment or a settlement/i);
+    expect(registerStep?.body).toMatch(/posting JV#/i);
     const txStep = walkthroughFor('Reporting entity').find((s) => s.screen === 'transactions');
     expect(txStep?.body).toMatch(/expanded register row/i);
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activityStatement, classifyRevisionEvent, existedAtOpening, isExistingAro, isWriteOff } from '../activity';
+import { activityStatement, classifyRevisionEvent, existedAtOpening, isExistingAro, isWriteOff, txHistoryEvents } from '../activity';
 import type { Derived } from '../../engine/derive';
 import type { Obligation } from '../types';
 import type { ObligationEvent } from '../../engine/rollforward';
@@ -115,5 +115,28 @@ describe('activityStatement', () => {
     expect(stmt.accretionNew).toBe(5);
     expect(stmt.closing).toBe(1_210);
     expect(isWriteOff(writtenOff)).toBe(true);
+  });
+});
+
+describe('txHistoryEvents', () => {
+  it('lists cost, term and settlement events separately for one obligation', () => {
+    const row = o({
+      id: 'o1', ref: 'ARO-1',
+      adj: [
+        { id: 'c1', kind: 'cost', amount: 50_000, date: '2027-01-15', reason: 'Revised engineering estimate' },
+        { id: 't1', kind: 'term', to: '2040-12-31', date: '2027-01-20', reason: 'Deferred retirement' },
+      ],
+    });
+    const events = [
+      ev({ id: 'e-c1', obligationId: 'o1', type: 'revision', amount: 48_000, date: '2027-01-15', note: 'Cost adjustment in FY2027 P01: Revised engineering estimate.' }),
+      ev({ id: 'e-ex', obligationId: 'o1', type: 'downward-excess', amount: -2_000, date: '2027-01-16' }),
+      ev({ id: 'e-t1', obligationId: 'o1', type: 'revision', amount: 12_000, date: '2027-01-20', note: 'Term adjustment in FY2027 P01: Deferred retirement.' }),
+      ev({ id: 'e-s1', obligationId: 'o1', type: 'settlement', amount: -10_000, date: '2027-02-28' }),
+      ev({ id: 'e-d1', obligationId: 'o1', type: 'disposal', amount: -5_000, date: '2027-03-31' }),
+      ev({ id: 'e-other', obligationId: 'o2', type: 'revision', amount: 1, note: 'Cost adjustment.' }),
+    ];
+    expect(txHistoryEvents(row, events, 'cost').map((e) => e.id)).toEqual(['e-c1', 'e-ex']);
+    expect(txHistoryEvents(row, events, 'term').map((e) => e.id)).toEqual(['e-t1']);
+    expect(txHistoryEvents(row, events, 'settle').map((e) => e.id)).toEqual(['e-s1', 'e-d1']);
   });
 });
