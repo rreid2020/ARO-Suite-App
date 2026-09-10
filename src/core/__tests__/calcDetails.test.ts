@@ -69,8 +69,28 @@ describe('obligationCalcLines', () => {
     expect(byKey.adjustedTerm.detail).toBe('settlement 2045-03-31');
     expect(byKey.opening.amount).toBe(1_000);
     expect(byKey.accretion.amount).toBe(10);
+    expect(byKey.accretion.group).toBe('Existing');
+    expect(byKey.accretionNew.amount).toBe(0);
+    expect(byKey.newAro.group).toBe('New');
+    expect(byKey.accretionNew.group).toBe('New');
     expect(byKey.term.amount).toBe(20);
     expect(byKey.closing.amount).toBe(1_030);
+  });
+
+  it('puts accretion on a newly created ARO onto Accretion on new ARO, not the existing line', () => {
+    const row = o({ id: 'n1', openingArc: undefined });
+    const events = [
+      ev({ id: 'add', obligationId: 'n1', type: 'addition', amount: 613_207.27 }),
+      ev({ id: 'accr', obligationId: 'n1', type: 'accretion', amount: 1_948.17 }),
+    ];
+    const books = registerBooks(row, events, [p1], [batch(['accr'])], p1);
+    const lines = obligationCalcLines(row, books, undefined, unit);
+    const byKey = Object.fromEntries(lines.map((l) => [l.key, l]));
+    expect(books.openingProvision).toBe(0);
+    expect(byKey.accretion.amount).toBe(0);
+    expect(byKey.newAro.amount).toBe(613_207.27);
+    expect(byKey.accretionNew.amount).toBe(1_948.17);
+    expect(byKey.closing.amount).toBe(615_155.44);
   });
 });
 

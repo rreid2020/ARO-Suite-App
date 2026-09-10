@@ -11,7 +11,7 @@ import type { RegisterBooks } from './registerBooks';
 import type { Obligation, ReportingUnit } from './types';
 import type { UsefulLife } from './usefulLife';
 
-export type CalcDetailGroup = 'Baseline' | 'Opening' | 'Activity' | 'Closing';
+export type CalcDetailGroup = 'Baseline' | 'Opening' | 'Existing' | 'New' | 'Activity' | 'Closing';
 export type CalcDetailKind = 'money' | 'years';
 
 export interface CalcDetailLine {
@@ -56,21 +56,21 @@ export function obligationCalcLines(
 ): CalcDetailLine[] {
   const originalSettle = o.settlementDate;
   const adjustedSettle = d?.settlementUsed ?? settlementInForce(o);
-  const accretion = books.accretionExisting + books.accretionNew;
   return [
     money('initialCost', 'Initial cost estimate', 'Baseline', initialCost(o)),
     money('currentCost', 'Cost estimate in current year dollars', 'Baseline', d?.cce ?? null),
     yearsLine('initialTerm', 'Initial term', termFromFyEnd(unit, originalSettle), originalSettle ? `settlement ${originalSettle}` : undefined),
     yearsLine('adjustedTerm', 'Adjusted term', d?.tD ?? termFromFyEnd(unit, adjustedSettle), adjustedSettle ? `settlement ${adjustedSettle}` : undefined),
     money('opening', 'Opening provision', 'Opening', books.openingProvision),
-    money('settlement', 'Settlement', 'Activity', books.settlement),
-    money('accretion', 'Accretion expense', 'Activity', accretion),
-    money('cost', 'Change of estimate — cost adjustments', 'Activity', books.costAdjustments),
-    money('term', 'Change of estimate — term adjustments', 'Activity', books.termAdjustments),
-    money('writeOff', 'Change of estimate — write-offs', 'Activity', books.writeOffs),
-    money('mass', 'Change of estimate — year-end mass update (inflation and interest rates)', 'Activity', books.massUpdate),
-    money('newAro', 'New ARO', 'Activity', books.newAro),
-    money('fx', 'Exchange differences', 'Activity', books.fx),
+    money('settlement', 'Settlement', 'Existing', books.settlement),
+    money('accretion', 'Accretion on existing ARO', 'Existing', books.accretionExisting),
+    money('cost', 'Change of estimate — cost adjustments', 'Existing', books.costAdjustments),
+    money('term', 'Change of estimate — term adjustments', 'Existing', books.termAdjustments),
+    money('writeOff', 'Change of estimate — write-offs', 'Existing', books.writeOffs),
+    money('mass', 'Change of estimate — year-end mass update (inflation and interest rates)', 'Existing', books.massUpdate),
+    money('newAro', 'New ARO', 'New', books.newAro),
+    money('accretionNew', 'Accretion on new ARO', 'New', books.accretionNew),
+    money('fx', 'Exchange differences', 'New', books.fx),
     money('closing', 'Closing provision', 'Closing', books.closingProvision),
   ];
 }
