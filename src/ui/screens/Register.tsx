@@ -18,7 +18,7 @@
  * posting step. Journal batches package those amounts for the GL.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit } from '../../core/authority';
@@ -163,6 +163,7 @@ export function Register() {
   const [newAroOpen, setNewAroOpen] = useState(false);
   const open = openPeriod(data ?? { periods: [] });
   const gridRef = useRef<HTMLTableElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const editable = canEdit(ui.role);
   const locked = openingLocked(data);
@@ -317,6 +318,32 @@ export function Register() {
   const filtered = sheet.rows;
   const pageRows = filtered.slice(page * PAGE, page * PAGE + PAGE);
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE));
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const sync = () => {
+      const room = window.innerHeight - el.getBoundingClientRect().top - 96;
+      const next = `${Math.max(240, room)}px`;
+      if (el.style.maxHeight !== next) el.style.maxHeight = next;
+      el.style.setProperty('--register-port', `${el.clientWidth}px`);
+      const row = el.querySelector('tbody tr:not(.register-expand-row)') as HTMLTableRowElement | null;
+      if (!row?.cells[0]) return;
+      el.style.setProperty('--register-lead-1', `${row.cells[0].offsetWidth}px`);
+      if (row.cells[1]) {
+        el.style.setProperty('--register-lead-2', `${row.cells[0].offsetWidth + row.cells[1].offsetWidth}px`);
+      }
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    if (gridRef.current) ro.observe(gridRef.current);
+    window.addEventListener('resize', sync);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', sync);
+    };
+  }, [cols.length, pageRows.length, expandedId, newAroOpen]);
 
   useEffect(() => { setPage(0); }, [filter, set, asAtId, sheet.filters, sheet.sort]);
 
@@ -702,7 +729,7 @@ export function Register() {
           {sel.size > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setSel(new Set())}>Clear selection ({sel.size})</button>}
         </div>
 
-        <div className="scroll-x">
+        <div className="register-scroll" ref={scrollRef}>
           <table className="table register-grid" ref={gridRef}>
             <thead>
               <tr className="grp">
@@ -835,11 +862,13 @@ export function Register() {
                   {expanded && asAt && (
                     <tr className="register-expand-row">
                       <td className="register-expand" colSpan={cols.length + 2}>
-                        <ObligationExpand
-                          obligation={o}
-                          fiscalYear={asAt.fiscalYear}
-                          asAtPeriodId={asAt.id}
-                        />
+                        <div className="register-expand-pin">
+                          <ObligationExpand
+                            obligation={o}
+                            fiscalYear={asAt.fiscalYear}
+                            asAtPeriodId={asAt.id}
+                          />
+                        </div>
                       </td>
                     </tr>
                   )}

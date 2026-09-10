@@ -240,8 +240,81 @@ a:hover { color: var(--color-accent-700); }
   border-bottom-color: var(--g);
 }
 
+.register-scroll {
+  overflow: auto;
+  max-height: 70dvh;
+  min-height: 12rem;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-divider);
+}
 .table.register-grid {
   width: max-content;
+}
+.table.register-grid thead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.table.register-grid thead th {
+  background: color-mix(in srgb, var(--g, #5e5956) 12%, var(--color-surface));
+}
+.table.register-grid thead tr.grp th {
+  background: color-mix(in srgb, var(--g, #5e5956) 22%, var(--color-surface));
+}
+.table.register-grid tfoot {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+}
+.table.register-grid tfoot td {
+  background: var(--color-surface);
+}
+.table.register-grid tfoot td.g-tone {
+  background: color-mix(in srgb, var(--g) 10%, var(--color-surface));
+}
+.table.register-grid tfoot td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+}
+.table.register-grid tfoot td:nth-child(2) {
+  position: sticky;
+  left: var(--register-lead-1, 30px);
+  z-index: 5;
+}
+.table.register-grid tfoot td:nth-child(3) {
+  position: sticky;
+  left: var(--register-lead-2, 86px);
+  z-index: 5;
+}
+.table.register-grid tbody tr:not(.register-expand-row) td:nth-child(1),
+.table.register-grid thead th:nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+.table.register-grid tbody tr:not(.register-expand-row) td:nth-child(2),
+.table.register-grid thead th:nth-child(2) {
+  position: sticky;
+  left: var(--register-lead-1, 30px);
+  z-index: 2;
+}
+.table.register-grid tbody tr:not(.register-expand-row) td:nth-child(3),
+.table.register-grid thead tr:not(.grp) th:nth-child(3) {
+  position: sticky;
+  left: var(--register-lead-2, 86px);
+  z-index: 2;
+}
+.table.register-grid thead th:nth-child(1),
+.table.register-grid thead th:nth-child(2),
+.table.register-grid thead tr:not(.grp) th:nth-child(3) {
+  z-index: 6;
+}
+.table.register-grid tbody tr:not(.register-expand-row) td:nth-child(-n+3) {
+  background: color-mix(in srgb, var(--g, #5e5956) 8%, var(--color-surface));
+}
+.table.register-grid tbody tr:not(.register-expand-row):hover td:nth-child(-n+3) {
+  background: color-mix(in srgb, var(--g, #5e5956) 14%, var(--color-surface));
 }
 .table.register-grid th {
   text-align: center;
@@ -286,8 +359,7 @@ a:hover { color: var(--color-accent-700); }
 }
 .table tbody tr.sheet-expand-row:hover,
 .table.register-grid tr.register-expand-row:hover { background: transparent; }
-.table tbody td.sheet-expand,
-.table.register-grid td.register-expand {
+.table tbody td.sheet-expand {
   white-space: normal;
   text-align: left;
   vertical-align: top;
@@ -295,7 +367,34 @@ a:hover { color: var(--color-accent-700); }
   padding: 14px 12px 18px;
   border-bottom: 2px solid var(--color-divider);
 }
-.register-panel { min-width: 640px; max-width: none; }
+.table.register-grid td.register-expand {
+  white-space: normal;
+  text-align: left;
+  vertical-align: top;
+  background: var(--color-surface);
+  padding: 0;
+  border-bottom: 2px solid var(--color-divider);
+}
+.register-expand-pin {
+  position: sticky;
+  left: 0;
+  box-sizing: border-box;
+  width: var(--register-port, 100%);
+  max-width: var(--register-port, 100%);
+  padding: 14px 12px 18px;
+  background: var(--color-surface);
+}
+.register-panel { min-width: 0; max-width: 100%; }
+.register-panel .scroll-x { max-width: 100%; }
+.register-panel .scroll-x .table {
+  width: max-content;
+  min-width: 0;
+  max-width: 100%;
+}
+.register-panel .table td,
+.register-panel .table th {
+  white-space: normal;
+}
 .register-tab-groups.register-tab-groups-inline {
   flex-wrap: nowrap;
 }
