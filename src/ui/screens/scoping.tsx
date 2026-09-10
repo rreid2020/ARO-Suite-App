@@ -2,8 +2,10 @@
  * ARO scoping — go-forward master TCA listing after opening lock.
  *
  * Conversion population stays on Opening register. An updated listing is
- * loaded here, compared to the ARO register, and acted on: scope new assets,
- * create linked obligations, flag unproductive ARO assets, retire disposed TCAs.
+ * compared to the ARO register both ways, and acted on: scope new assets,
+ * create linked obligations, flag unproductive ARO assets, retire disposed
+ * TCAs, add missing TCA rows for orphan obligations, and align remaining UL
+ * when the listing life has moved.
  */
 
 import React, { useRef, useState } from 'react';
@@ -29,6 +31,7 @@ import {
   applyCreateObligation,
   applyDisposeLinkedAro,
   applyTcaStatusToAro,
+  applyUlFromTca,
   applyUnproductiveFlags,
   planTcaSync,
   suggestedAroAssetNumber,
@@ -66,7 +69,13 @@ function kindLabel(kind: TcaSyncAction['kind']): string {
   if (kind === 'mark-unproductive') return 'Flag unproductive';
   if (kind === 'mark-productive') return 'Restore productive use';
   if (kind === 'dispose-aro') return 'Retire ARO';
+  if (kind === 'orphan-obligation') return 'Obligation has no TCA';
+  if (kind === 'ul-mismatch') return 'Align remaining UL';
   return 'Not on latest file';
+}
+
+function foundOnLabel(foundOn: TcaSyncAction['foundOn']): string {
+  return foundOn === 'register' ? 'ARO register → listing' : 'Listing → ARO register';
 }
 
 export function Scope() {
@@ -95,7 +104,7 @@ export function Scope() {
   const assets = data.tcaAssets ?? [];
   const openingTca = openingTcaListing(data);
   const gaps = tcaScopingGaps(assets, data.obligations);
-  const actions = planTcaSync(data);
+  const actions = planTcaSync(data, unit);
   const inScope = assets.filter((a) => a.scope === 'In scope').length;
   const out = assets.filter((a) => a.scope === 'Scoped out');
   const tcaExtras = tcaColumnNames(assets);
@@ -294,6 +303,23 @@ export function Scope() {
     setDisposeFor(null);
   };
 
+  const submitUl = (action: TcaSyncAction) => {
+    const probe = structuredClone(data);
+    const msg = applyUlFromTca(probe, action, unit);
+    if (msg.startsWith('Nothing') || msg.includes('not on the current listing') || msg.startsWith('That action')) {
+      apply('Align remaining UL', 'refused', msg, () => {});
+      return;
+    }
+    apply('Align remaining UL', 'write', msg, (s) => {
+      applyUlFromTca(s.data[unit.id], action, unit);
+    });
+  };
+
+  const openListingImport = () => {
+    setUi({ tab: 'tca' });
+    setImporting(true);
+  };
+
   const createPanel = (action: TcaSyncAction) => {
     const asset = tcaAssetByNumber(data.tcaAssets, action.assetNumber);
     const listingAcq = asset?.acquisitionDate ?? '';
@@ -386,7 +412,11 @@ export function Scope() {
 
   const disposePanel = (action: TcaSyncAction) => (
     <>
-      <div className="kicker" style={{ marginBottom: 8 }}>Retire ARO for disposed TCA {action.assetNumber}</div>
+      <div className="kicker" style={{ marginBottom: 8 }}>
+        {action.kind === 'orphan-obligation'
+          ? `Retire ARO whose TCA is not on the listing (${action.assetNumber})`
+          : `Retire ARO for disposed TCA ${action.assetNumber}`}
+      </div>
       <div style={{ maxWidth: 260 }}>
         <Field label="Effective date" help="Must fall in the open period. Posts the related-asset-sold case: extinguish remaining provision and retire the ARO asset.">
           <input className="input" value={settledOn} onChange={(e) => setSettledOn(maskDateInput(e.target.value))} placeholder="YYYY-MM-DD" />
@@ -429,7 +459,7 @@ export function Scope() {
             ? (assets.length === 0 ? 'Load the current tangible capital assets' : `${assets.length} asset${assets.length === 1 ? '' : 's'} on the current listing`)
             : 'Conversion scoping is on Opening register'}
           note={goForward
-            ? 'This is the current master TCA listing. Load an updated extract when the organisation\'s PPE population changes. New rows are scoped here. In-scope assets without an obligation need a linked obligation and ARO asset. Unproductive and Disposed status keep the ARO register in step. Opening register stays the conversion snapshot.'
+            ? 'This is the current master TCA listing. Load an updated extract when the organisation\'s PPE population changes. Keep ARO in sync compares both ways: listing → register (new in-scope assets, Unproductive / Disposed status) and register → listing (orphan obligations, remaining UL that no longer matches the TCA). Opening register stays the conversion snapshot.'
             : 'Lock opening balances first. Until then, the conversion population is scoped on Opening register so go-forward changes cannot rewrite the opening listing.'}
           actions={
             <>
@@ -511,7 +541,11 @@ export function Scope() {
           )}
           {gaps.orphanObligations.length > 0 && (
             <div className="note-panel" style={{ marginTop: 12, borderLeftColor: 'var(--bad)' }}>
-              {gaps.orphanObligations.length} obligation{gaps.orphanObligations.length === 1 ? '' : 's'} name a TCA asset number that is not on this listing. Add those assets to the current listing.
+              {gaps.orphanObligations.length} obligation{gaps.orphanObligations.length === 1 ? '' : 's'} name a TCA asset number that is not on this listing.
+              {' '}
+              <button className="btn btn-ghost btn-sm" type="button" onClick={() => setUi({ tab: 'actions' })}>
+                Review on Keep ARO in sync
+              </button>
             </div>
           )}
         </Block>
@@ -522,12 +556,12 @@ export function Scope() {
           className={`posting-pane g-tone ${paneTone}`}
           kicker="Keep ARO in sync"
           title={actions.length === 0 ? 'The current listing and the ARO register are in step' : `${actions.length} action${actions.length === 1 ? '' : 's'} to keep the ARO register in step`}
-          note="Compared against existing obligations and ARO assets. Creating an obligation posts initial recognition into the open period. Disposing a TCA retires remaining provision and the ARO asset as a related-asset sale. Unproductive flags stop later estimate changes from hitting the ARO asset."
+          note="Listing → register: new in-scope assets, Unproductive (ARO not in productive use so later estimate changes go to expense), Disposed (retire remaining provision and the ARO asset). Register → listing: obligations whose TCA is missing, and remaining UL that no longer matches the master TCA. Applying remaining UL changes Total UL so remaining as-at equals the listing; conversion expired UL is not rewritten."
         >
           {!goForward ? (
             <Empty>Lock opening balances on Opening register before go-forward sync actions are taken here.</Empty>
           ) : actions.length === 0 ? (
-            <Empty>Nothing to do. New TCA rows, Unproductive and Disposed status, and in-scope assets without an obligation will appear here after the next listing load or status change.</Empty>
+            <Empty>Nothing to do. New TCA rows, Unproductive and Disposed status, in-scope assets without an obligation, orphan ARO rows, and remaining-UL drift versus the listing will appear here after the next listing load or status change.</Empty>
           ) : (
             <SheetTable
               rows={actions}
@@ -535,6 +569,7 @@ export function Scope() {
               noun="actions"
               columns={[
                 { key: 'kind', header: 'Action', value: (a) => kindLabel(a.kind), cell: (a) => kindLabel(a.kind) },
+                { key: 'foundOn', header: 'Found', value: (a) => foundOnLabel(a.foundOn), cell: (a) => foundOnLabel(a.foundOn) },
                 { key: 'assetNumber', header: 'TCA asset number', value: (a) => a.assetNumber, cell: (a) => a.assetNumber },
                 { key: 'description', header: 'Description', value: (a) => a.description, tdStyle: { whiteSpace: 'normal', maxWidth: 240 }, cell: (a) => a.description },
                 { key: 'detail', header: 'What to do', value: (a) => a.detail, tdStyle: { whiteSpace: 'normal', maxWidth: 420 }, cell: (a) => a.detail },
@@ -559,23 +594,33 @@ export function Scope() {
                   if (a.kind === 'mark-unproductive' || a.kind === 'mark-productive') {
                     return <button className="btn btn-primary btn-sm" type="button" onClick={() => submitFlag(a)}>Apply</button>;
                   }
-                  if (a.kind === 'dispose-aro') {
+                  if (a.kind === 'ul-mismatch') {
+                    return <button className="btn btn-primary btn-sm" type="button" onClick={() => submitUl(a)}>Apply listing UL</button>;
+                  }
+                  if (a.kind === 'dispose-aro' || a.kind === 'orphan-obligation') {
                     const disposeOpen = disposeFor === a.id;
                     return (
-                      <button
-                        className={disposeOpen ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
-                        type="button"
-                        aria-expanded={disposeOpen}
-                        onClick={() => {
-                          if (disposeOpen) { setDisposeFor(null); return; }
-                          setCreateFor(null);
-                          setDisposeFor(a.id);
-                          setSettledOn(open?.ends ?? '');
-                          setUi({ tab: 'actions' });
-                        }}
-                      >
-                        {disposeOpen ? 'Close' : 'Retire ARO'}
-                      </button>
+                      <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+                        {a.kind === 'orphan-obligation' && (
+                          <button className="btn btn-secondary btn-sm" type="button" onClick={openListingImport}>
+                            Load listing
+                          </button>
+                        )}
+                        <button
+                          className={disposeOpen ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
+                          type="button"
+                          aria-expanded={disposeOpen}
+                          onClick={() => {
+                            if (disposeOpen) { setDisposeFor(null); return; }
+                            setCreateFor(null);
+                            setDisposeFor(a.id);
+                            setSettledOn(open?.ends ?? '');
+                            setUi({ tab: 'actions' });
+                          }}
+                        >
+                          {disposeOpen ? 'Close' : 'Retire ARO'}
+                        </button>
+                      </span>
                     );
                   }
                   return null;
@@ -596,7 +641,7 @@ export function Scope() {
           className={`posting-pane g-tone ${paneTone}`}
           kicker="Obligation and ARO Asset Listing"
           title="Current ARO register"
-          note="Every obligation on this reporting unit, including rows created after conversion. Opening register still shows only the conversion population. Edit identity, useful life and productive-use on the ARO Register."
+          note="Every obligation on this reporting unit, including rows created after conversion. Opening register still shows only the conversion population. Orphan TCA numbers and remaining-UL drift versus the master listing are resolved on Keep ARO in sync. Edit identity, useful life and productive-use on the ARO Register."
           actions={
             <button className="btn btn-secondary btn-sm" type="button" onClick={() => setUi({ screen: 'register', tab: '', sub: '' })}>
               Open ARO Register

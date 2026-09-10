@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyUlAlignment, dismissUlAlignment, evaluateNewAroLifeDraft, expiredUlFromAcquisition, formatUl,
   newObligationUlIssue, nextUlDraftFromTca, proposeUlAlignment, remainingUlYears, suggestedSettlementDate,
-  ulAlignmentPending, ulOutOfLine, usefulLifeAsAt, yearsToPeriods, yearsToSettlement, termToSettlementAtYearStart,
+  tcaAroUlGap, ulAlignmentPending, ulOutOfLine, usefulLifeAsAt, yearsToPeriods, yearsToSettlement, termToSettlementAtYearStart,
   withSettlementFromRemaining,
 } from '../usefulLife';
 import type { Obligation, ReportingUnit } from '../types';
@@ -206,6 +206,38 @@ describe('new obligation UL vs settlement', () => {
       '30/360 US (DAYS360)',
     );
     expect(kept.settlementDate).toBe('2051-03-31');
+  });
+});
+
+describe('tcaAroUlGap', () => {
+  const tca = { totalUl: 25, expiredUl: 10 };
+
+  it('is silent when listing remaining matches ARO remaining as-at', () => {
+    expect(tcaAroUlGap(tca, o({ totalUl: 25, expiredUl: 10 }), [], periods, unit, p1)).toBeNull();
+  });
+
+  it('is silent for a sub-period drift', () => {
+    expect(tcaAroUlGap({ totalUl: 25, expiredUl: 10.04 }, o({ totalUl: 25, expiredUl: 10 }), [], periods, unit, p1)).toBeNull();
+  });
+
+  it('flags when listing remaining has moved and proposes a total that restores it', () => {
+    const gap = tcaAroUlGap({ totalUl: 40, expiredUl: 10 }, o({ totalUl: 25, expiredUl: 10 }), [], periods, unit, p1);
+    expect(gap?.kind).toBe('remaining-diff');
+    expect(gap?.tcaRemaining).toBe(30);
+    expect(gap?.aroRemaining).toBe(15);
+    expect(gap?.proposedTotalUl).toBe(40);
+    expect(gap?.proposedExpiredUl).toBeNull();
+  });
+
+  it('flags an obligation with no UL and copies the listing figures', () => {
+    const gap = tcaAroUlGap(tca, o({ totalUl: undefined, expiredUl: undefined }), [], periods, unit, p1);
+    expect(gap?.kind).toBe('missing-aro-ul');
+    expect(gap?.proposedTotalUl).toBe(25);
+    expect(gap?.proposedExpiredUl).toBe(10);
+  });
+
+  it('does not compare when the listing has no Total UL', () => {
+    expect(tcaAroUlGap({ totalUl: null, expiredUl: 10 }, o(), [], periods, unit, p1)).toBeNull();
   });
 });
 

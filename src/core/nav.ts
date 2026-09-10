@@ -53,7 +53,7 @@ export const STEPS: StepDef[] = [
   { id: 'recalc-source', label: 'Imported data', phase: 'Prepare', domain: 'register', auditor: true, firm: false,
     purpose: 'The extracts as they were read, with the mapped columns marked, so a reader can tie every figure in the recalculation back to a row in the original workbook.' },
   { id: 'scope', label: 'ARO scoping', phase: 'Prepare', domain: 'register',
-    purpose: 'After opening lock, this is the current master TCA listing. Load an updated listing and compare it to the ARO register. New assets are scoped In, Out, or Undecided; in-scope assets get a new obligation and ARO asset. Disposed TCAs retire linked ARO rows; Unproductive TCAs flag the ARO asset so later estimate changes go to expense. These changes do not rewrite the opening register.' },
+    purpose: 'After opening lock, this is the current master TCA listing. Load an updated listing and compare it both ways with the ARO register. New assets are scoped In, Out, or Undecided; in-scope assets get a new obligation and ARO asset. Disposed TCAs retire linked ARO rows; Unproductive TCAs flag the ARO asset so later estimate changes go to expense. Obligations whose TCA is missing, and remaining UL that no longer matches the listing, are actions too. These changes do not rewrite the opening register.' },
 
   // ── Measure ────────────────────────────────────────────────────────────
   { id: 'register', label: 'ARO register', phase: 'Measure', domain: 'register',

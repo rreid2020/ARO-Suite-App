@@ -153,6 +153,66 @@ export function ulOutOfLine(remainingUlYears: number | null, settlementTerm: num
   return Math.abs(remainingUlYears - settlementTerm) > tol + 1e-9;
 }
 
+/** One calendar period in years — the same tolerance used for UL review. */
+export function periodYearFraction(calendar: CalendarType | string | undefined): number {
+  return 1 / periodsPerYear(calendar);
+}
+
+export type TcaAroUlGapKind = 'missing-aro-ul' | 'remaining-diff';
+
+/**
+ * Master TCA remaining life versus the linked ARO remaining as-at.
+ * Listing remaining is Total UL − Expired UL on the TCA. ARO remaining rolls
+ * opening expired plus posted amortization. A gap means the listing changed
+ * (or the obligation never received UL) and the ARO has not been aligned.
+ */
+export interface TcaAroUlGap {
+  kind: TcaAroUlGapKind;
+  tcaTotal: number | null;
+  tcaExpired: number | null;
+  tcaRemaining: number;
+  aroTotal: number | null;
+  aroExpired: number | null;
+  aroRemaining: number | null;
+  /** Total UL that restores ARO remaining as-at to the listing remaining. */
+  proposedTotalUl: number;
+  /** Set when the obligation has no UL yet — copy expired from the listing. */
+  proposedExpiredUl: number | null;
+}
+
+export function tcaAroUlGap(
+  tca: { totalUl?: number | null; expiredUl?: number | null },
+  o: Obligation,
+  events: ObligationEvent[],
+  periods: Period[],
+  unit: Pick<ReportingUnit, 'dayCount' | 'calendarType'>,
+  asAt: Period | undefined,
+): TcaAroUlGap | null {
+  const tcaRemaining = remainingUlYears(tca.totalUl, tca.expiredUl);
+  if (tcaRemaining == null) return null;
+  const tcaTotal = asYears(tca.totalUl);
+  const tcaExpired = asYears(tca.expiredUl) ?? 0;
+  const life = usefulLifeAsAt(o, events, periods, unit, asAt);
+  if (life.totalYears == null) {
+    return {
+      kind: 'missing-aro-ul',
+      tcaTotal, tcaExpired, tcaRemaining,
+      aroTotal: null, aroExpired: openingExpired(o), aroRemaining: remainingUl(o),
+      proposedTotalUl: tcaTotal ?? tcaRemaining,
+      proposedExpiredUl: tcaExpired,
+    };
+  }
+  if (!ulOutOfLine(tcaRemaining, life.remainingYears ?? 0, periodYearFraction(unit.calendarType))) return null;
+  const expiredAsAt = life.expiredYears ?? 0;
+  return {
+    kind: 'remaining-diff',
+    tcaTotal, tcaExpired, tcaRemaining,
+    aroTotal: life.totalYears, aroExpired: expiredAsAt, aroRemaining: life.remainingYears,
+    proposedTotalUl: round4(expiredAsAt + tcaRemaining),
+    proposedExpiredUl: null,
+  };
+}
+
 export function proposeUlAlignment(
   o: Obligation,
   events: ObligationEvent[],

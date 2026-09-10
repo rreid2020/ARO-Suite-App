@@ -7,6 +7,7 @@ import {
   applyCreateObligation,
   applyDisposeLinkedAro,
   applyTcaStatusToAro,
+  applyUlFromTca,
   planTcaSync,
   uniqueObligationRef,
 } from '../tcaSync';
@@ -89,6 +90,12 @@ function ready() {
   return { state, id, data };
 }
 
+const ulUnit = { dayCount: '30/360 US (DAYS360)', calendarType: 'Monthly (12)' as const };
+
+function plan(data: ReturnType<typeof ready>['data']) {
+  return planTcaSync(data, ulUnit);
+}
+
 describe('planTcaSync', () => {
   it('asks for scoping on undecided rows and a new obligation when scoped in', () => {
     const { data } = ready();
@@ -161,5 +168,62 @@ describe('apply go-forward actions', () => {
     expect(msg).toMatch(/^Retired /);
     expect(data.events.some((e) => e.type === 'disposal' && e.obligationId === data.obligations[0].id)).toBe(true);
     expect(planTcaSync(data).some((a) => a.kind === 'dispose-aro')).toBe(false);
+  });
+});
+
+describe('register → listing gaps', () => {
+  it('raises an orphan obligation whose TCA is not on the listing', () => {
+    const { data } = ready();
+    data.obligations.push({
+      ...data.obligations[0],
+      id: 'orphan-1',
+      ref: 'ARO-ORPH',
+      assetId: 'AS-GONE',
+      aroAssetNumber: 'ARC-GONE',
+    });
+    const orphans = plan(data).filter((a) => a.kind === 'orphan-obligation');
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0].foundOn).toBe('register');
+    expect(orphans[0].assetNumber).toBe('AS-GONE');
+    expect(orphans[0].obligationIds).toEqual(['orphan-1']);
+  });
+
+  it('aligns ARO remaining UL when the master TCA remaining life has moved', () => {
+    const { data } = ready();
+    const well = data.tcaAssets.find((a) => a.assetNumber === 'AS-10001')!;
+    well.totalUl = 40;
+    well.expiredUl = 10;
+    const actions = plan(data).filter((a) => a.kind === 'ul-mismatch');
+    expect(actions).toHaveLength(1);
+    expect(actions[0].foundOn).toBe('register');
+    expect(actions[0].obligationIds).toEqual([data.obligations[0].id]);
+    const msg = applyUlFromTca(data, actions[0], ulUnit);
+    expect(msg).toMatch(/^Applied master TCA remaining UL/);
+    expect(data.obligations[0].totalUl).toBe(40);
+    expect(data.obligations[0].expiredUl).toBe(10);
+    expect(plan(data).some((a) => a.kind === 'ul-mismatch')).toBe(false);
+  });
+
+  it('copies listing UL onto an obligation that has none', () => {
+    const { data } = ready();
+    const o = data.obligations[0];
+    delete o.totalUl;
+    delete o.expiredUl;
+    const well = data.tcaAssets.find((a) => a.assetNumber === 'AS-10001')!;
+    well.totalUl = 25;
+    well.expiredUl = 8;
+    const action = plan(data).find((a) => a.kind === 'ul-mismatch')!;
+    expect(action.detail).toMatch(/no ARO useful life/);
+    applyUlFromTca(data, action, ulUnit);
+    expect(o.totalUl).toBe(25);
+    expect(o.expiredUl).toBe(8);
+    expect(plan(data).some((a) => a.kind === 'ul-mismatch')).toBe(false);
+  });
+
+  it('does not raise remaining-UL drift for a disposed TCA — retirement is the action', () => {
+    const { data } = ready();
+    data.tcaAssets[0] = { ...setTcaAssetStatus(data.tcaAssets[0], 'Disposed'), totalUl: 40, expiredUl: 10 };
+    expect(plan(data).some((a) => a.kind === 'ul-mismatch')).toBe(false);
+    expect(plan(data).some((a) => a.kind === 'dispose-aro')).toBe(true);
   });
 });
