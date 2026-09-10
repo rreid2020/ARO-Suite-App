@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { registerBooks, unpostedInYearCount } from '../registerBooks';
+import { journalBatchForEvent, registerBooks, unpostedInYearCount } from '../registerBooks';
 import type { JournalBatch, Obligation } from '../types';
 import type { Period } from '../periods';
 import type { ObligationEvent } from '../../engine/rollforward';
@@ -174,5 +174,22 @@ describe('registerBooks', () => {
     expect(books.writeOffs).toBe(-80);
     expect(books.massUpdate).toBe(25);
     expect(books.closingProvision).toBe(915);
+  });
+});
+
+describe('journalBatchForEvent', () => {
+  it('returns the posted journal batch number for an event', () => {
+    const posted = batch('Posted', ['accr']);
+    expect(journalBatchForEvent('accr', [posted])?.number).toBe('JB-001');
+    expect(journalBatchForEvent('missing', [posted])).toBeUndefined();
+  });
+
+  it('prefers a posted batch over a draft, and ignores a reversed batch', () => {
+    const reversed: JournalBatch = { ...batch('Reversed', ['accr']), id: 'b-rev', number: 'JB-000' };
+    const draft: JournalBatch = { ...batch('Draft', ['accr']), id: 'b-draft', number: 'JB-002' };
+    const posted: JournalBatch = { ...batch('Posted', ['accr']), id: 'b-posted', number: 'JB-001' };
+    expect(journalBatchForEvent('accr', [reversed, draft, posted])?.number).toBe('JB-001');
+    expect(journalBatchForEvent('accr', [reversed])).toBeUndefined();
+    expect(journalBatchForEvent('accr', [reversed, draft])?.number).toBe('JB-002');
   });
 });

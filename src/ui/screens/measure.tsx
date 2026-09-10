@@ -8,7 +8,7 @@ import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit, canPost } from '../../core/authority';
-import { Obligation, ReportingUnit } from '../../core/types';
+import { JournalBatch, Obligation, ReportingUnit } from '../../core/types';
 import { LEDGER_EVENT_TYPES } from '../../engine/rollforward';
 import {
   curveOptionLabel, curveRateDetail, curveSourcePoints, curveTermOf, isPublishedCurve,
@@ -17,7 +17,7 @@ import {
 import { frameworkPolicy, unitDiscounts } from '../../engine/framework';
 import { openPeriod, remainingDiscountTerm } from '../../core/periodClose';
 import { unitCurve } from '../../core/measure';
-import { registerBooks } from '../../core/registerBooks';
+import { journalBatchForEvent, registerBooks } from '../../core/registerBooks';
 import { assetCalcLines, calcLineDrillable, calcLineSource, obligationCalcLines, type CalcDetailLine } from '../../core/calcDetails';
 import { accretionSchedule, amortizationSchedule, type ScheduleRow } from '../../core/schedules';
 import { applyUlAlignment, dismissUlAlignment, formatUl, ulAlignmentOf, ulAlignmentPending, usefulLifeAsAt } from '../../core/usefulLife';
@@ -98,7 +98,7 @@ export function ObligationExpand({
 
   return (
     <div className="register-panel">
-      <div className="register-tab-groups">
+      <div className="register-tab-groups register-tab-groups-inline">
         <div className="register-tab-group g-tone g-obligation">
           <div className="kicker">Obligation</div>
           <div className="register-tabs">
@@ -175,7 +175,7 @@ export function ObligationExpand({
             <DetailTable
               kicker="Obligation"
               title="Baseline and in-year movement"
-              note="Initial cost is the estimate as recorded. Current-year dollars escalate that estimate to the year end. Terms are from the year end to the original and adjusted settlement dates. Open a movement row to see the posted events that make up the total. Post a cost or term adjustment or a settlement from Transactions on this row."
+              note="Initial cost is the estimate as recorded. Current-year dollars escalate that estimate to the year end. Terms are from the year end to the original and adjusted settlement dates. Open a movement row to see the posted events that make up the total, including the posting JV#. Post a cost or term adjustment or a settlement from Transactions on this row."
               rows={obligationCalcLines(picked, books, d, unit)}
               currency={unit.currency}
               calendar={unit.calendarType}
@@ -184,6 +184,7 @@ export function ObligationExpand({
               books={books}
               events={data.events}
               periods={data.periods}
+              batches={data.batches}
               asAt={asAt}
             />
           )
@@ -234,7 +235,7 @@ export function ObligationExpand({
             <DetailTable
               kicker="ARO asset"
               title="Useful life and in-year movement"
-              note="Useful life is shown in years and months. Opening, additions, amortization and closing are the same ARO asset columns as the register as at the selected period. Open a movement row to see the posted events that make up the total. Additions are the capitalized new ARO and revisions. Amortization appears after month-end allocation."
+              note="Useful life is shown in years and months. Opening, additions, amortization and closing are the same ARO asset columns as the register as at the selected period. Open a movement row to see the posted events that make up the total, including the posting JV#. Additions are the capitalized new ARO and revisions. Amortization appears after month-end allocation."
               rows={assetCalcLines(picked, books, life)}
               currency={unit.currency}
               calendar={unit.calendarType}
@@ -243,6 +244,7 @@ export function ObligationExpand({
               books={books}
               events={data.events}
               periods={data.periods}
+              batches={data.batches}
               asAt={asAt}
             />
           )
@@ -264,7 +266,7 @@ export function ObligationExpand({
 
 function DetailTable({
   kicker, title, note, rows, currency: code, calendar,
-  side, obligation, books, events, periods, asAt,
+  side, obligation, books, events, periods, batches, asAt,
 }: {
   kicker: string;
   title: string;
@@ -277,8 +279,10 @@ function DetailTable({
   books: NonNullable<ReturnType<typeof registerBooks>>;
   events: ObligationEvent[];
   periods: Period[];
+  batches: JournalBatch[];
   asAt: Period;
 }) {
+  const { setUi } = useStore();
   const [openKey, setOpenKey] = useState<string | null>(null);
 
   return (
@@ -335,6 +339,7 @@ function DetailTable({
             return <Empty>{source.emptyNote ?? 'No posted events on this line through the selected period.'}</Empty>;
           }
           const periodOf = (id: string) => periods.find((p) => p.id === id)?.code ?? id;
+          const jvOf = (id: string) => journalBatchForEvent(id, batches);
           return (
             <>
               {source.note ? <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5 }}>{source.note}</p> : null}
@@ -351,6 +356,7 @@ function DetailTable({
                       {currency(source.events.reduce((s, e) => s + e.amount, 0), code)}
                     </td>
                     <td />
+                    <td />
                   </tr>
                 }
                 columns={[
@@ -360,6 +366,22 @@ function DetailTable({
                   {
                     key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num',
                     value: (e) => e.amount, cell: (e) => currency(e.amount, code),
+                  },
+                  {
+                    key: 'jv', header: 'JV#',
+                    value: (e) => jvOf(e.id)?.number ?? '',
+                    cell: (e) => {
+                      const batch = jvOf(e.id);
+                      if (!batch) return <span className="muted">—</span>;
+                      return (
+                        <button type="button" className="btn btn-ghost btn-sm"
+                          aria-label={`Open journal batch ${batch.number}`}
+                          style={{ fontFamily: 'var(--font-heading)', fontWeight: 800, paddingLeft: 0, paddingRight: 0, textDecoration: 'underline', textUnderlineOffset: 3 }}
+                          onClick={() => setUi({ screen: 'batches', tab: '', sub: batch.id })}>
+                          {batch.number}
+                        </button>
+                      );
+                    },
                   },
                   { key: 'note', header: 'Note', value: (e) => e.note ?? '', cell: (e) => e.note || <span className="muted">—</span> },
                 ]}

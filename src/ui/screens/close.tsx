@@ -381,11 +381,10 @@ export function Batches() {
   const unit = useUnit()!;
   const data = useUnitData()!;
   const open = openPeriod(data);
-  const [openId, setOpenId] = useState<string | null>(null);
   const [drillAccountId, setDrillAccountId] = useState<string | null>(null);
   const settings = state.settings[unit.tenantId];
   const accounts = settings.accounts;
-  const selected = data.batches.find((b) => b.id === openId) ?? null;
+  const selected = data.batches.find((b) => b.id === ui.sub) ?? null;
 
   const create = () => {
     const blocked = periodBatchRefusal(state, unit.tenantId, unit.id);
@@ -442,7 +441,7 @@ export function Batches() {
   );
 
   const openBatch = (id: string) => {
-    setOpenId(id);
+    setUi({ sub: id });
     setDrillAccountId(null);
   };
 
@@ -475,7 +474,7 @@ export function Batches() {
           : 'The journal entry is summarised by GL account. Open an account to see the obligation lines behind it. Approve is the preparer\'s sign-off that the entry is right — it does not post. A reviewer or partner Posts after that.'}
         actions={(
           <>
-            <button className="btn btn-secondary btn-sm" onClick={() => { setOpenId(null); setDrillAccountId(null); }}>All batches</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => { setUi({ sub: '' }); setDrillAccountId(null); }}>All batches</button>
             {drill && <button className="btn btn-secondary btn-sm" onClick={() => setDrillAccountId(null)}>Journal entry</button>}
             {workflow(selected)}
           </>

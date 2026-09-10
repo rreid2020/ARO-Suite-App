@@ -55,6 +55,14 @@ export function postedEventIds(batches: JournalBatch[]): Set<string> {
   return ids;
 }
 
+/** The journal batch that packaged this event for the GL — posted first, then approved, then draft. Reversed batches do not count. */
+export function journalBatchForEvent(eventId: string, batches: JournalBatch[]): JournalBatch | undefined {
+  const covering = batches.filter((b) => b.status !== 'Reversed' && b.lines.some((l) => l.eventId === eventId));
+  return covering.find((b) => b.status === 'Posted')
+    ?? covering.find((b) => b.status === 'Approved')
+    ?? covering[0];
+}
+
 function conversionProvision(o: Obligation, events: ObligationEvent[]): number {
   return round2(events.filter((e) => e.obligationId === o.id && e.type === 'opening').reduce((s, e) => s + e.amount, 0));
 }

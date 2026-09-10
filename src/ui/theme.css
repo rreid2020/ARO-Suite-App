@@ -295,7 +295,14 @@ a:hover { color: var(--color-accent-700); }
   padding: 14px 12px 18px;
   border-bottom: 2px solid var(--color-divider);
 }
-.register-panel { min-width: 640px; max-width: 1080px; }
+.register-panel { min-width: 640px; max-width: none; }
+.register-tab-groups.register-tab-groups-inline {
+  flex-wrap: nowrap;
+}
+.register-tab-groups-inline .register-tab-group {
+  flex: 1 1 0;
+  min-width: 0;
+}
 .curve-lookup-scroll {
   max-height: 480px;
   max-width: 420px;
