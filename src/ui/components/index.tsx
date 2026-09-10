@@ -4,10 +4,10 @@
  * The prerequisites panel, the return banner, basis tags and field help.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { num, parseNumber } from '../../core/format';
 import {
-  evaluateNewAroLifeDraft, expiredUlFromAcquisition, tcaUlText, type NewObligationUlIssue,
+  evaluateNewAroLifeDraft, expiredUlFromAcquisition, formatUl, parseUlYears, splitUlYears, tcaUlText, yearsFromUlParts, type NewObligationUlIssue,
 } from '../../core/usefulLife';
 import { TERM_CONVENTIONS } from '../../engine/curve';
 import { DAY_COUNTS, maskDateInput } from '../../engine/dates';
@@ -147,13 +147,17 @@ function listingUlHint(
   noun: string,
   empty?: string,
 ): string | undefined {
-  const listedText = tcaUlText(listed);
+  const listedText = listed == null || !Number.isFinite(listed) ? '' : formatUl(listed);
+  const formYears = parseUlYears(form);
   if (!listedText && !form.trim()) return empty;
-  if (listedText && form.trim() === listedText) {
-    return `Defaulted from the TCA ${noun} (${listedText} yr). Change if the ARO asset life differs.`;
+  if (listedText && form.trim() && Number.isFinite(formYears) && Math.abs(formYears - (listed ?? NaN)) < 1e-9) {
+    return `Defaulted from the TCA ${noun} (${listedText}). Change on the ARO asset if its life differs.`;
   }
-  if (listedText && form.trim() !== listedText) {
-    return `TCA ${noun} on the listing is ${listedText} yr.`;
+  if (listedText && !form.trim()) {
+    return `Defaulted from the TCA ${noun} (${listedText}). Change on the ARO asset if its life differs.`;
+  }
+  if (listedText && form.trim()) {
+    return `TCA ${noun} on the listing is ${listedText}.`;
   }
   return undefined;
 }
@@ -161,6 +165,66 @@ function listingUlHint(
 function ulFieldHint(issue: NewObligationUlIssue | null, field: NewObligationUlIssue['field'], fallback?: string) {
   if (issue?.field === field) return { hint: issue.message, hintTone: 'bad' as const };
   return { hint: fallback, hintTone: undefined };
+}
+
+export function UlYmInputs({
+  valueYears,
+  onCommit,
+  readOnly,
+  disabled,
+}: {
+  valueYears: number | null;
+  onCommit?: (years: number | null) => void;
+  readOnly?: boolean;
+  disabled?: boolean;
+}) {
+  const split = valueYears == null || !Number.isFinite(valueYears)
+    ? { y: '', m: '' }
+    : (() => {
+      const p = splitUlYears(valueYears);
+      return { y: num(p.years), m: num(p.months, 2) };
+    })();
+  const [y, setY] = useState(split.y);
+  const [m, setM] = useState(split.m);
+  useEffect(() => { setY(split.y); setM(split.m); }, [split.y, split.m]);
+  const locked = readOnly || disabled || !onCommit;
+  const commit = () => {
+    if (!onCommit) return;
+    if (!y.trim() && !m.trim()) {
+      onCommit(null);
+      return;
+    }
+    const yn = parseNumber(y);
+    const mn = m.trim() === '' ? 0 : parseNumber(m);
+    if (!Number.isFinite(yn) || !Number.isFinite(mn)) return;
+    onCommit(yearsFromUlParts(yn, mn));
+  };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
+      <input
+        className="input num"
+        style={{ width: 52, minHeight: 26, fontSize: 11.5, padding: '1px 4px' }}
+        value={y}
+        readOnly={locked}
+        disabled={disabled}
+        aria-label="Years"
+        onChange={(e) => setY(e.target.value)}
+        onBlur={commit}
+      />
+      <span className="muted">yr</span>
+      <input
+        className="input num"
+        style={{ width: 48, minHeight: 26, fontSize: 11.5, padding: '1px 4px' }}
+        value={m}
+        readOnly={locked}
+        disabled={disabled}
+        aria-label="Months"
+        onChange={(e) => setM(e.target.value)}
+        onBlur={commit}
+      />
+      <span className="muted">mo</span>
+    </span>
+  );
 }
 
 export function NewAroLifeFields({
@@ -193,56 +257,46 @@ export function NewAroLifeFields({
   );
   const totalHint = ulFieldHint(
     life.issue, 'totalUl',
-    listingUlHint(totalUl, listingTotal, 'Total UL', 'No Total UL on the master TCA listing. Enter the ARO asset useful life in years.'),
+    listingUlHint(totalUl, listingTotal, 'Total UL', 'No Total UL on the master TCA listing. Enter the ARO asset useful life in years and leftover months.'),
   );
   const expiredFallback = expiredUl.trim() === '' && listingExpired == null && proposedExpired != null
-    ? `From the obligating event to the cost estimate date: ${num(proposedExpired)} years already consumed.`
+    ? `From the obligating event to the cost estimate date: ${formatUl(proposedExpired)} already consumed.`
     : listingUlHint(expiredUl, listingExpired, 'Expired UL');
   const expiredHint = ulFieldHint(life.issue, 'expiredUl', expiredFallback);
   const remainingHint = life.remainingUl != null
-    ? 'Total UL minus Expired UL. Expected settlement defaults to this many years after the cost estimate date.'
+    ? 'Total UL minus Expired UL, in years and leftover months. Expected settlement defaults to this remaining life after the cost estimate date.'
     : undefined;
 
   return (
     <>
       <Field
         label="Total UL"
-        help="Years. Defaults from the linked TCA on the master listing. Remaining UL falls as amortization is posted."
+        help="Years and leftover months. Defaults from the linked TCA on the master listing. Change it here on the ARO asset if the retirement-cost asset life differs. Remaining UL falls as amortization is posted."
         hint={totalHint.hint}
         hintTone={totalHint.hintTone}
       >
-        <input
-          className="input num"
-          value={totalUl}
-          onChange={(e) => onTotalUl(e.target.value)}
-          onBlur={() => {
-            const n = parseNumber(totalUl);
-            if (Number.isFinite(n)) onTotalUl(num(n));
-          }}
+        <UlYmInputs
+          valueYears={life.totalUl}
+          onCommit={(n) => onTotalUl(n == null ? '' : tcaUlText(n))}
         />
       </Field>
       <Field
         label="Expired UL"
-        help="Years already consumed when this obligation is recognised. Catch-up amortization uses this over total UL. Defaults from the linked TCA. Leave blank to measure from the ARO asset acquisition date (obligating event) to the cost estimate date when the listing has no Expired UL."
+        help="Life already consumed when this obligation is recognised, in years and leftover months. Catch-up amortization uses this over total UL. Defaults from the linked TCA. Leave blank to measure from the ARO asset acquisition date to the cost estimate date when the listing has no Expired UL."
         hint={expiredHint.hint}
         hintTone={expiredHint.hintTone}
       >
-        <input
-          className="input num"
-          value={expiredUl}
-          onChange={(e) => onExpiredUl(e.target.value)}
-          onBlur={() => {
-            const n = parseNumber(expiredUl);
-            if (Number.isFinite(n)) onExpiredUl(num(n));
-          }}
+        <UlYmInputs
+          valueYears={life.expiredUl}
+          onCommit={(n) => onExpiredUl(n == null ? '' : tcaUlText(n))}
         />
       </Field>
       <Field
         label="Remaining UL"
-        help="Total UL minus Expired UL of the ARO asset. Expected settlement defaults to the cost estimate date plus this remaining life. A later settlement date is allowed."
+        help="Total UL minus Expired UL of the ARO asset, in years and leftover months. Expected settlement defaults to the cost estimate date plus this remaining life. A later settlement date is allowed."
         hint={remainingHint}
       >
-        <input className="input num" value={life.remainingUl == null ? '' : num(life.remainingUl)} readOnly />
+        <input className="input num" value={life.remainingUl == null ? '' : formatUl(life.remainingUl)} readOnly />
       </Field>
     </>
   );
@@ -261,9 +315,9 @@ export function NewAroSettlementFields({
 }) {
   const defaulted = Boolean(suggested && settlementDate === suggested);
   const fallback = defaulted && remainingUl != null
-    ? `Defaulted from remaining UL (${num(remainingUl)} yr after the cost estimate date). Change to a later date if settlement is further out.`
+    ? `Defaulted from remaining UL (${formatUl(remainingUl)} after the cost estimate date). Change to a later date if settlement is further out.`
     : remainingUl != null
-      ? `Must be at least remaining UL (${num(remainingUl)} yr).`
+      ? `Must be at least remaining UL (${formatUl(remainingUl)}).`
       : undefined;
   const settlementHint = ulFieldHint(issue, 'settlement', fallback);
   return (
@@ -285,7 +339,7 @@ export function NewAroSettlementFields({
         label="Years to settlement"
         help="From the cost estimate date to expected settlement. Must be equal to or greater than remaining UL."
       >
-        <input className="input num" value={yearsToSettlement == null ? '' : num(yearsToSettlement)} readOnly />
+        <input className="input num" value={yearsToSettlement == null ? '' : formatUl(yearsToSettlement)} readOnly />
       </Field>
     </>
   );

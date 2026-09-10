@@ -4,8 +4,9 @@
  * Conversion population stays on Opening register. An updated listing is
  * compared to the ARO register both ways, and acted on: scope new assets,
  * create linked obligations, flag unproductive ARO assets, retire disposed
- * TCAs, add missing TCA rows for orphan obligations, and align remaining UL
- * when the listing life has moved.
+ * TCAs, add missing TCA rows for orphan obligations, prove listing Expired UL
+ * from acquisition to conversion, and align remaining UL only after the listing
+ * life is consistent.
  */
 
 import React, { useRef, useState } from 'react';
@@ -30,6 +31,7 @@ import {
 import {
   applyCreateObligation,
   applyDisposeLinkedAro,
+  applyListingExpiredUl,
   applyTcaStatusToAro,
   applyUlFromTca,
   applyUnproductiveFlags,
@@ -71,6 +73,7 @@ function kindLabel(kind: TcaSyncAction['kind']): string {
   if (kind === 'dispose-aro') return 'Retire ARO';
   if (kind === 'orphan-obligation') return 'Obligation has no TCA';
   if (kind === 'ul-mismatch') return 'Align remaining UL';
+  if (kind === 'listing-ul') return 'Correct listing UL';
   return 'Not on latest file';
 }
 
@@ -105,6 +108,7 @@ export function Scope() {
   const openingTca = openingTcaListing(data);
   const gaps = tcaScopingGaps(assets, data.obligations);
   const actions = planTcaSync(data, unit);
+  const listingUlCount = actions.filter((a) => a.kind === 'listing-ul').length;
   const inScope = assets.filter((a) => a.scope === 'In scope').length;
   const out = assets.filter((a) => a.scope === 'Scoped out');
   const tcaExtras = tcaColumnNames(assets);
@@ -303,10 +307,22 @@ export function Scope() {
     setDisposeFor(null);
   };
 
+  const submitListingUl = (action: TcaSyncAction) => {
+    const probe = structuredClone(data);
+    const msg = applyListingExpiredUl(probe, action, unit);
+    if (msg.startsWith('Listing expired') || msg.includes('not on the current listing') || msg.startsWith('That action')) {
+      apply('Correct listing Expired UL', 'refused', msg, () => {});
+      return;
+    }
+    apply('Correct listing Expired UL', 'write', msg, (s) => {
+      applyListingExpiredUl(s.data[unit.id], action, unit);
+    });
+  };
+
   const submitUl = (action: TcaSyncAction) => {
     const probe = structuredClone(data);
     const msg = applyUlFromTca(probe, action, unit);
-    if (msg.startsWith('Nothing') || msg.includes('not on the current listing') || msg.startsWith('That action')) {
+    if (msg.startsWith('Nothing') || msg.includes('not on the current listing') || msg.startsWith('That action') || msg.startsWith('Correct Expired UL')) {
       apply('Align remaining UL', 'refused', msg, () => {});
       return;
     }
@@ -459,7 +475,7 @@ export function Scope() {
             ? (assets.length === 0 ? 'Load the current tangible capital assets' : `${assets.length} asset${assets.length === 1 ? '' : 's'} on the current listing`)
             : 'Conversion scoping is on Opening register'}
           note={goForward
-            ? 'This is the current master TCA listing. Load an updated extract when the organisation\'s PPE population changes. Keep ARO in sync compares both ways: listing → register (new in-scope assets, Unproductive / Disposed status) and register → listing (orphan obligations, remaining UL that no longer matches the TCA). Opening register stays the conversion snapshot.'
+            ? 'This is the current master TCA listing. Total UL, Expired UL and Remaining UL are years and leftover months. Remaining UL is Total UL minus Expired UL. Those figures default onto the ARO asset; change UL on the ARO Register if the retirement-cost asset life differs. Keep ARO in sync proves listing Expired UL from the acquisition date to conversion. A newly acquired asset at conversion has zero expired UL.'
             : 'Lock opening balances first. Until then, the conversion population is scoped on Opening register so go-forward changes cannot rewrite the opening listing.'}
           actions={
             <>
@@ -548,6 +564,15 @@ export function Scope() {
               </button>
             </div>
           )}
+          {listingUlCount > 0 && (
+            <div className="note-panel" style={{ marginTop: 12, borderLeftColor: 'var(--bad)' }}>
+              Expired UL on {listingUlCount} listing row{listingUlCount === 1 ? '' : 's'} does not match life from the acquisition date to conversion. Correct it on the listing; do not copy that remaining onto the ARO.
+              {' '}
+              <button className="btn btn-ghost btn-sm" type="button" onClick={() => setUi({ tab: 'actions' })}>
+                Review on Keep ARO in sync
+              </button>
+            </div>
+          )}
         </Block>
       )}
 
@@ -556,12 +581,12 @@ export function Scope() {
           className={`posting-pane g-tone ${paneTone}`}
           kicker="Keep ARO in sync"
           title={actions.length === 0 ? 'The current listing and the ARO register are in step' : `${actions.length} action${actions.length === 1 ? '' : 's'} to keep the ARO register in step`}
-          note="Listing → register: new in-scope assets, Unproductive (ARO not in productive use so later estimate changes go to expense), Disposed (retire remaining provision and the ARO asset). Register → listing: obligations whose TCA is missing, and remaining UL that no longer matches the master TCA. Applying remaining UL changes Total UL so remaining as-at equals the listing; conversion expired UL is not rewritten."
+          note="Listing Expired UL is proved first: years from the TCA acquisition date to conversion (prior year end). Same-day acquisition and conversion means expired UL is zero. Correct that figure on the listing; do not copy a wrong listing remaining onto the ARO. After the listing is consistent, remaining UL on linked obligations can be aligned. Unproductive flags ARO not in productive use; Disposed retires remaining provision and the ARO asset. Obligations whose TCA is missing are the reverse pass."
         >
           {!goForward ? (
             <Empty>Lock opening balances on Opening register before go-forward sync actions are taken here.</Empty>
           ) : actions.length === 0 ? (
-            <Empty>Nothing to do. New TCA rows, Unproductive and Disposed status, in-scope assets without an obligation, orphan ARO rows, and remaining-UL drift versus the listing will appear here after the next listing load or status change.</Empty>
+            <Empty>Nothing to do. New TCA rows, Unproductive and Disposed status, in-scope assets without an obligation, listing Expired UL that does not match acquisition through conversion, orphan ARO rows, and remaining-UL drift versus a consistent listing will appear here after the next listing load or status change.</Empty>
           ) : (
             <SheetTable
               rows={actions}
@@ -594,8 +619,11 @@ export function Scope() {
                   if (a.kind === 'mark-unproductive' || a.kind === 'mark-productive') {
                     return <button className="btn btn-primary btn-sm" type="button" onClick={() => submitFlag(a)}>Apply</button>;
                   }
+                  if (a.kind === 'listing-ul') {
+                    return <button className="btn btn-primary btn-sm" type="button" onClick={() => submitListingUl(a)}>Correct listing UL</button>;
+                  }
                   if (a.kind === 'ul-mismatch') {
-                    return <button className="btn btn-primary btn-sm" type="button" onClick={() => submitUl(a)}>Apply listing UL</button>;
+                    return <button className="btn btn-primary btn-sm" type="button" onClick={() => submitUl(a)}>Apply listing remaining</button>;
                   }
                   if (a.kind === 'dispose-aro' || a.kind === 'orphan-obligation') {
                     const disposeOpen = disposeFor === a.id;
@@ -641,7 +669,7 @@ export function Scope() {
           className={`posting-pane g-tone ${paneTone}`}
           kicker="Obligation and ARO Asset Listing"
           title="Current ARO register"
-          note="Every obligation on this reporting unit, including rows created after conversion. Opening register still shows only the conversion population. Orphan TCA numbers and remaining-UL drift versus the master listing are resolved on Keep ARO in sync. Edit identity, useful life and productive-use on the ARO Register."
+          note="Every obligation on this reporting unit, including rows created after conversion. Opening register still shows only the conversion population. Total UL, Expired UL and Remaining UL are years and leftover months. Listing figures default onto the ARO asset; change UL on the ARO Register if the retirement-cost asset life differs."
           actions={
             <button className="btn btn-secondary btn-sm" type="button" onClick={() => setUi({ screen: 'register', tab: '', sub: '' })}>
               Open ARO Register

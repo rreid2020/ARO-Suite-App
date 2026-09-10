@@ -255,7 +255,7 @@ const FIRM: Guide = {
       title: '2. Scope the current population',
       body: [
         'After opening lock, ARO scoping is the current master TCA listing. Load an updated listing and compare it to the ARO register.',
-        'New assets are scoped In, Out, or Undecided. In-scope assets get a new obligation and ARO asset. Remaining useful life defaults from the TCA; expected settlement is suggested from that remaining life and cannot be shorter.',
+        'New assets are scoped In, Out, or Undecided. In-scope assets get a new obligation and ARO asset. Total UL, Expired UL and Remaining UL are years and leftover months. Listing UL defaults onto the ARO asset; you can change those numbers on the ARO asset only. Remaining useful life is used after listing Expired UL matches life from the acquisition date to conversion; a newly acquired asset at conversion has zero expired UL. Expected settlement is suggested from remaining life and cannot be shorter.',
       ],
     },
     {

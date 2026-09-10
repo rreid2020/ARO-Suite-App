@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyUlAlignment, dismissUlAlignment, evaluateNewAroLifeDraft, expiredUlFromAcquisition, formatUl,
-  newObligationUlIssue, nextUlDraftFromTca, proposeUlAlignment, remainingUlYears, suggestedSettlementDate,
-  tcaAroUlGap, ulAlignmentPending, ulOutOfLine, usefulLifeAsAt, yearsToPeriods, yearsToSettlement, termToSettlementAtYearStart,
+  listingExpiredUlIssue, newObligationUlIssue, nextUlDraftFromTca, parseUlYears, proposeUlAlignment, remainingUlYears, splitUlYears, suggestedSettlementDate,
+  tcaAroUlGap, tcaListingAsAt, ulAlignmentPending, ulOutOfLine, usefulLifeAsAt, yearsFromUlParts, yearsToPeriods, yearsToSettlement, termToSettlementAtYearStart,
   withSettlementFromRemaining,
 } from '../usefulLife';
 import type { Obligation, ReportingUnit } from '../types';
@@ -37,13 +37,23 @@ const p2 = period({ id: 'p2', no: 2, status: 'Open', starts: '2026-05-01', ends:
 const periods = [p1, p2];
 
 describe('formatUl', () => {
-  it('shows years and months on a monthly calendar', () => {
-    expect(formatUl(20, 'Monthly (12)')).toBe('20 yr · 240 mo');
+  it('shows whole years and leftover months so a partial year is readable', () => {
+    expect(formatUl(20)).toBe('20 yr · 0 mo');
+    expect(formatUl(20.75)).toBe('20 yr · 9 mo');
+    expect(formatUl(1 / 12)).toBe('0 yr · 1 mo');
     expect(yearsToPeriods(15, 'Monthly (12)')).toBe(180);
   });
 
-  it('shows years and quarters on a quarterly calendar', () => {
-    expect(formatUl(20, 'Quarterly (4)')).toBe('20 yr · 80 qtr');
+  it('uses leftover months on a quarterly calendar too', () => {
+    expect(formatUl(20, 'Quarterly (4)')).toBe('20 yr · 0 mo');
+  });
+
+  it('parses years, leftover months, and a plain year figure', () => {
+    expect(parseUlYears(25)).toBe(25);
+    expect(parseUlYears('25')).toBe(25);
+    expect(parseUlYears('17 yr · 9 mo')).toBe(17.75);
+    expect(yearsFromUlParts(17, 9)).toBe(17.75);
+    expect(splitUlYears(17.75)).toEqual({ years: 17, months: 9 });
   });
 });
 
@@ -129,6 +139,33 @@ describe('expiredUlFromAcquisition', () => {
     expect(expiredUlFromAcquisition('2006-04-01', '2026-04-01', 25)).toBe(20);
     expect(expiredUlFromAcquisition('2006-04-01', '2026-04-01', 15)).toBe(15);
     expect(expiredUlFromAcquisition('2026-04-01', '2026-04-01', 25)).toBe(0);
+  });
+});
+
+describe('listingExpiredUlIssue', () => {
+  it('uses conversion (prior year end) as the listing as-at', () => {
+    expect(tcaListingAsAt({ fyEnd: '2027-03-31' })).toBe('2026-03-31');
+  });
+
+  it('flags listed expired UL when acquisition is the conversion date', () => {
+    const issue = listingExpiredUlIssue(
+      { acquisitionDate: '2026-03-31', totalUl: 30, expiredUl: 5 },
+      '2026-03-31',
+      '30/360 US (DAYS360)',
+      'Monthly (12)',
+    );
+    expect(issue?.expectedExpired).toBe(0);
+    expect(issue?.listedExpired).toBe(5);
+    expect(issue?.expectedRemaining).toBe(30);
+  });
+
+  it('is silent when listed expired matches elapsed life from acquisition', () => {
+    expect(listingExpiredUlIssue(
+      { acquisitionDate: '2026-03-31', totalUl: 30, expiredUl: 0 },
+      '2026-03-31',
+      '30/360 US (DAYS360)',
+      'Monthly (12)',
+    )).toBeNull();
   });
 });
 

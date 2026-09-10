@@ -3,9 +3,10 @@
  *
  * After opening lock the listing is compared both ways. New in-scope assets
  * need a linked obligation. Unproductive / Disposed TCA status must land on
- * the ARO asset (productive-use flag, or retirement). The reverse pass finds
- * obligations whose TCA is missing, and remaining UL that no longer matches
- * the listing after a life change on the PPE.
+ * the ARO asset (productive-use flag, or retirement). Listing Expired UL is
+ * proved from acquisition to conversion before remaining UL is compared.
+ * The reverse pass finds obligations whose TCA is missing, and remaining UL
+ * that no longer matches a consistent listing.
  */
 
 import { settlementInForce } from '../engine/derive';
@@ -19,7 +20,7 @@ import {
   tcaAssetStatusOf,
 } from './tcaListing';
 import type { AppState, Obligation, ReportingUnit, TcaAsset, UnitData } from './types';
-import { tcaAroUlGap } from './usefulLife';
+import { listingExpiredUlIssue, tcaAroUlGap, tcaListingAsAt } from './usefulLife';
 
 export type TcaSyncKind =
   | 'scope-undecided'
@@ -29,7 +30,8 @@ export type TcaSyncKind =
   | 'dispose-aro'
   | 'dropped'
   | 'orphan-obligation'
-  | 'ul-mismatch';
+  | 'ul-mismatch'
+  | 'listing-ul';
 
 /** Where the planner found the gap. */
 export type TcaSyncFoundOn = 'listing' | 'register';
@@ -44,7 +46,7 @@ export interface TcaSyncAction {
   obligationIds: string[];
 }
 
-export type TcaSyncUnit = Pick<ReportingUnit, 'dayCount' | 'calendarType'>;
+export type TcaSyncUnit = Pick<ReportingUnit, 'dayCount' | 'calendarType' | 'fyEnd'>;
 
 export function uniqueObligationRef(obligations: Obligation[], base: string): string {
   const used = new Set(obligations.map((o) => o.ref.trim().toLowerCase()));
@@ -171,27 +173,42 @@ export function planTcaSync(data: UnitData, unit?: TcaSyncUnit): TcaSyncAction[]
       });
     }
 
-    if (unit && status !== 'Disposed' && linked.length) {
-      const mismatched = linked.filter((o) => booksStillOpen(data, o, period) && tcaAroUlGap(asset, o, data.events, data.periods, unit, period));
-      if (mismatched.length) {
-        const sample = tcaAroUlGap(asset, mismatched[0], data.events, data.periods, unit, period)!;
-        const listingRem = formatYears(sample.tcaRemaining);
-        const aroBits = mismatched.map((o) => {
-          const gap = tcaAroUlGap(asset, o, data.events, data.periods, unit, period)!;
-          const aroRem = gap.aroRemaining == null ? 'no UL' : formatYears(gap.aroRemaining);
-          return `${o.ref} remaining ${aroRem}`;
-        });
+    if (unit && status !== 'Disposed') {
+      const asAt = tcaListingAsAt(unit);
+      const listingUl = listingExpiredUlIssue(asset, asAt, unit.dayCount, unit.calendarType);
+      if (listingUl) {
+        const expectedRem = listingUl.expectedRemaining == null ? '—' : formatYears(listingUl.expectedRemaining);
         actions.push({
-          id: `ul:${asset.id}`,
-          kind: 'ul-mismatch',
-          foundOn: 'register',
+          id: `listing-ul:${asset.id}`,
+          kind: 'listing-ul',
+          foundOn: 'listing',
           assetNumber: asset.assetNumber,
           description: asset.description,
-          detail: sample.kind === 'missing-aro-ul'
-            ? `The master TCA remaining UL is ${listingRem}, but ${mismatched.length === 1 ? mismatched[0].ref : `${mismatched.length} linked obligations`} ${mismatched.length === 1 ? 'has' : 'have'} no ARO useful life. Apply the listing so Total UL and Expired UL (and remaining) match the TCA.`
-            : `The master TCA remaining UL is ${listingRem}. ${aroBits.join('; ')}. Apply the listing remaining to the ARO asset — Total UL becomes expired as-at plus listing remaining. Opening expired UL is not rewritten.`,
-          obligationIds: mismatched.map((o) => o.id),
+          detail: `Acquired ${asset.acquisitionDate}; listing as-at ${listingUl.asAt}. Expired UL should be ${formatYears(listingUl.expectedExpired)} (remaining ${expectedRem}), not ${formatYears(listingUl.listedExpired)}. Correct Expired UL on the master TCA listing. Do not copy this listing remaining onto the ARO.`,
+          obligationIds: ids,
         });
+      } else if (linked.length) {
+        const mismatched = linked.filter((o) => booksStillOpen(data, o, period) && tcaAroUlGap(asset, o, data.events, data.periods, unit, period));
+        if (mismatched.length) {
+          const sample = tcaAroUlGap(asset, mismatched[0], data.events, data.periods, unit, period)!;
+          const listingRem = formatYears(sample.tcaRemaining);
+          const aroBits = mismatched.map((o) => {
+            const gap = tcaAroUlGap(asset, o, data.events, data.periods, unit, period)!;
+            const aroRem = gap.aroRemaining == null ? 'no UL' : formatYears(gap.aroRemaining);
+            return `${o.ref} remaining ${aroRem}`;
+          });
+          actions.push({
+            id: `ul:${asset.id}`,
+            kind: 'ul-mismatch',
+            foundOn: 'register',
+            assetNumber: asset.assetNumber,
+            description: asset.description,
+            detail: sample.kind === 'missing-aro-ul'
+              ? `The master TCA remaining UL is ${listingRem}, but ${mismatched.length === 1 ? mismatched[0].ref : `${mismatched.length} linked obligations`} ${mismatched.length === 1 ? 'has' : 'have'} no ARO useful life. Apply the listing so Total UL and Expired UL (and remaining) match the TCA.`
+              : `The master TCA remaining UL is ${listingRem}. ${aroBits.join('; ')}. Apply the listing remaining to the ARO asset — Total UL becomes expired as-at plus listing remaining. Opening expired UL is not rewritten.`,
+            obligationIds: mismatched.map((o) => o.id),
+          });
+        }
       }
     }
   }
@@ -256,6 +273,20 @@ export function applyUnproductiveFlags(data: UnitData, action: TcaSyncAction): s
     : 'Nothing to flag.';
 }
 
+export function applyListingExpiredUl(
+  data: UnitData,
+  action: TcaSyncAction,
+  unit: TcaSyncUnit,
+): string {
+  if (action.kind !== 'listing-ul') return 'That action does not change listing useful life.';
+  const asset = tcaAssetByNumber(data.tcaAssets ?? [], action.assetNumber);
+  if (!asset) return `${action.assetNumber} is not on the current listing.`;
+  const issue = listingExpiredUlIssue(asset, tcaListingAsAt(unit), unit.dayCount, unit.calendarType);
+  if (!issue) return 'Listing expired UL already matches acquisition through conversion.';
+  asset.expiredUl = issue.expectedExpired;
+  return `Corrected Expired UL on ${asset.assetNumber} to ${formatYears(issue.expectedExpired)} as at ${issue.asAt}. Remaining UL is ${issue.expectedRemaining == null ? '—' : formatYears(issue.expectedRemaining)}.`;
+}
+
 export function applyUlFromTca(
   data: UnitData,
   action: TcaSyncAction,
@@ -264,6 +295,9 @@ export function applyUlFromTca(
   if (action.kind !== 'ul-mismatch') return 'That action does not change useful life.';
   const asset = tcaAssetByNumber(data.tcaAssets ?? [], action.assetNumber);
   if (!asset) return `${action.assetNumber} is not on the current listing.`;
+  if (listingExpiredUlIssue(asset, tcaListingAsAt(unit), unit.dayCount, unit.calendarType)) {
+    return 'Correct Expired UL on the master TCA listing first. Do not copy that listing remaining onto the ARO.';
+  }
   const period = openPeriod(data);
   let n = 0;
   const short: string[] = [];

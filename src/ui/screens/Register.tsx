@@ -21,7 +21,7 @@ import { canEdit } from '../../core/authority';
 import { extraColumnKey, extraColumnName, isOpeningBalanceField, obligationColumnNames, obligationColumns, obligationField, openingLocked, patchObligationField, remainingUl } from '../../core/openingLoad';
 import { tcaAssetStatusOf, tcaByObligationId, tcaColumnNames, tcaForObligation } from '../../core/tcaListing';
 import { classCodeOf, classKey, classNameOf, findAssetClass } from '../../core/assetClass';
-import { formatUl, evaluateNewAroLifeDraft, nextUlDraftFromTca, suggestedSettlementDate, ulAlignmentPending, usefulLifeAsAt, termToSettlementAtYearStart, withSettlementFromRemaining } from '../../core/usefulLife';
+import { formatUl, evaluateNewAroLifeDraft, nextUlDraftFromTca, parseUlYears, suggestedSettlementDate, ulAlignmentPending, usefulLifeAsAt, termToSettlementAtYearStart, withSettlementFromRemaining } from '../../core/usefulLife';
 import { fiscalYearStart } from '../../core/periods';
 import { postNewAro } from '../../core/inYear';
 import { assetBooks, openPeriod, type AssetBooks } from '../../core/periodClose';
@@ -29,7 +29,7 @@ import { registerBooksById, unpostedInYearCount, type RegisterBooks } from '../.
 import { Obligation, TcaAsset, type EstimateColumn } from '../../core/types';
 import { isValidDate, maskDateInput, priorYearEnd } from '../../engine/dates';
 import { SCOPING_REASONS, VARIANCE_CAUSES } from '../../seed';
-import { Block, Field, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, num, parseNumber, pct, SheetStatus, SheetTable, SheetTh, Stats, Tag, useSheet } from '../components';
+import { Block, Field, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields, UlYmInputs, DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload, num, parseNumber, pct, SheetStatus, SheetTable, SheetTh, Stats, Tag, useSheet } from '../components';
 import type { EstimateLineDraft, EstimateMode } from '../components';
 import { SheetFilter } from '../sheet';
 import { download, S } from '../../xlsx/write';
@@ -81,8 +81,8 @@ const COLUMNS: ColDef[] = [
   { key: '_open_term', label: 'Term to settlement', group: 'Identity', kind: 'derived', align: 'right', width: 150 },
   { key: 'openingArc', label: 'Opening ARO asset', group: 'Asset', kind: 'number', align: 'right', width: 140 },
   { key: 'openingAccumAmort', label: 'Opening accumulated amortization', group: 'Asset', kind: 'number', align: 'right', width: 190 },
-  { key: 'totalUl', label: 'Total UL', group: 'Asset', kind: 'number', align: 'right', width: 120 },
-  { key: 'expiredUl', label: 'Expired UL', group: 'Asset', kind: 'number', align: 'right', width: 120 },
+  { key: 'totalUl', label: 'Total UL', group: 'Asset', kind: 'number', align: 'right', width: 168 },
+  { key: 'expiredUl', label: 'Expired UL', group: 'Asset', kind: 'number', align: 'right', width: 140 },
   { key: 'remainingUl', label: 'Remaining UL', group: 'Asset', kind: 'derived', align: 'right', width: 140 },
   { key: '_arc_gross', label: 'ARO asset gross', group: 'Asset', kind: 'derived', align: 'right', width: 140 },
   { key: '_arc_accum', label: 'Accumulated amortization', group: 'Asset', kind: 'derived', align: 'right', width: 170 },
@@ -381,7 +381,13 @@ export function Register() {
     const col = allColumns.find((c) => c.key === key);
     if (!col) return;
     let parsed: unknown = value;
-    if (col.kind === 'number') parsed = parseNumber(value);
+    if (key === 'totalUl') {
+      parsed = value.trim() === '' ? null : parseUlYears(value);
+      if (value.trim() && (typeof parsed !== 'number' || !Number.isFinite(parsed) || parsed < 0)) {
+        apply('Edit Total UL', 'refused', `${o.ref}: Total UL must be years, or years and leftover months.`, () => {});
+        return;
+      }
+    } else if (col.kind === 'number') parsed = parseNumber(value);
     let after = patchObligationField(o, key, parsed);
     if (key === 'aroAssetClassCode' || key === 'aroAssetClassName') {
       const cls = findAssetClass(assetClasses, value);
@@ -535,7 +541,10 @@ export function Register() {
           const list = s.data[unit.id].obligations;
           for (const w of writes) {
             const i = list.findIndex((x) => x.id === w.o.id);
-            if (i >= 0) list[i] = patchObligationField(list[i], w.key, w.value);
+            if (i < 0) continue;
+            let value: unknown = w.value;
+            if (w.key === 'totalUl') value = w.value === '' ? null : parseUlYears(w.value);
+            list[i] = patchObligationField(list[i], w.key, value);
           }
         },
       });
@@ -927,18 +936,31 @@ export function Register() {
                         groupToneClass(c.group, ci === 0 || cols[ci - 1].group !== c.group),
                       ].filter(Boolean).join(' ')}
                         style={{ textAlign: c.align, whiteSpace: 'nowrap' }}>
-                        {c.key === 'remainingUl' || c.key === 'totalUl' || c.key === 'expiredUl' || c.key === '_open_term'
+                        {c.key === 'totalUl'
+                          ? (
+                            <UlYmInputs
+                              valueYears={typeof o.totalUl === 'number' ? o.totalUl : null}
+                              disabled={!editable}
+                              onCommit={(n) => {
+                                const cur = typeof o.totalUl === 'number' ? o.totalUl : null;
+                                if (n == null && cur == null) return;
+                                if (n != null && cur != null && Math.abs(n - cur) < 1e-9) return;
+                                editCell(o, 'totalUl', n == null ? '' : String(n));
+                              }}
+                            />
+                          )
+                          : c.key === 'remainingUl' || c.key === 'expiredUl' || c.key === '_open_term'
                           ? (
                             <span title={
-                              c.key === 'remainingUl' ? 'Total UL minus expired UL as at this period. Expired rises as amortization is posted.'
+                              c.key === 'remainingUl' ? 'Total UL minus expired UL as at this period, in years and leftover months. Expired rises as amortization is posted. Change Total UL on this ARO asset if remaining life should move.'
+                                : c.key === 'expiredUl' ? 'Life already consumed as at this period, in years and leftover months. Conversion Expired UL is locked with opening balances.'
                                 : c.key === '_open_term' ? 'Years from the start of this fiscal year to expected settlement as it stood that morning. The next fiscal year is one year shorter.'
                                   : undefined
                             }>
                               {formatUl(
-                                c.key === 'totalUl' ? ulById.get(o.id)?.totalYears
-                                  : c.key === 'expiredUl' ? ulById.get(o.id)?.expiredYears
-                                    : c.key === '_open_term' ? openTermById.get(o.id)
-                                      : ulById.get(o.id)?.remainingYears,
+                                c.key === 'expiredUl' ? ulById.get(o.id)?.expiredYears
+                                  : c.key === '_open_term' ? openTermById.get(o.id)
+                                    : ulById.get(o.id)?.remainingYears,
                                 unit.calendarType,
                               )}
                               {c.key === 'remainingUl' && ulAlignmentPending(o) ? <Tag kind="warn">UL review</Tag> : null}

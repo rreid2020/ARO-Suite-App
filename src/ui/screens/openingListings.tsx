@@ -8,7 +8,7 @@ import React from 'react';
 import { classCodeOf, classKey, classNameOf, findAssetClass } from '../../core/assetClass';
 import { estimatedCostOf, obligationColumns, openingAroCostOf, remainingUl } from '../../core/openingLoad';
 import { obligationsForAsset, tcaAssetStatusOf, tcaNbv } from '../../core/tcaListing';
-import { formatUl } from '../../core/usefulLife';
+import { formatUl, remainingUlYears } from '../../core/usefulLife';
 import type { AroAssetClass, Obligation, TcaAsset, TcaAssetStatus } from '../../core/types';
 import type { ObligationEvent } from '../../engine/rollforward';
 import { currency, SheetColumn } from '../components';
@@ -215,6 +215,7 @@ export function tcaListingColumns(args: {
     { key: 'nbv', header: 'Net book value', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (a) => tcaNbv(a), cell: (a) => currency(tcaNbv(a), code) },
     { key: 'totalUl', header: 'Total UL', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (a) => a.totalUl ?? 0, cell: (a) => formatUl(typeof a.totalUl === 'number' ? a.totalUl : null, calendarType) },
     { key: 'expiredUl', header: 'Expired UL', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (a) => a.expiredUl ?? 0, cell: (a) => formatUl(typeof a.expiredUl === 'number' ? a.expiredUl : null, calendarType) },
+    { key: 'remainingUl', header: 'Remaining UL', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (a) => remainingUlYears(a.totalUl, a.expiredUl) ?? 0, cell: (a) => formatUl(remainingUlYears(a.totalUl, a.expiredUl), calendarType) },
     { key: 'site', header: 'Site', value: (a) => a.site, cell: (a) => cellDash(a.site) },
     { key: 'assetStatus', header: 'Asset status', width: 140, value: (a) => tcaAssetStatusOf(a), cell: (a) => (
       <select className="input" style={{ minHeight: 26, fontSize: 11.5 }} disabled={!editable || !onStatus}

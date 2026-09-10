@@ -91,6 +91,16 @@ describe('parseOpeningRegister', () => {
     expect(remainingUl({ expiredUl: 10 } as never)).toBeNull();
   });
 
+  it('reads Total UL and Expired UL as years and leftover months', () => {
+    const parsed = parseOpeningRegister([
+      'Obligation Number,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'ARO-0001,1200000,800000,400000,17 yr · 9 mo,5 yr · 3 mo,AS-1',
+    ].join('\n'));
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.rows[0].totalUl).toBe(17.75);
+    expect(parsed.rows[0].expiredUl).toBe(5.25);
+  });
+
   it('maps ARO acquisition cost as a calculated heading, not an extra', () => {
     const parsed = parseOpeningRegister([
       'Obligation Number,Opening provision,ARO asset,Accumulated amortization,ARO acquisition cost,Total UL,Expired UL,Asset number',

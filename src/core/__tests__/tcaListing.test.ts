@@ -152,6 +152,17 @@ describe('parseTcaListing', () => {
     expect(parsed.rows[1].expiredUl).toBeNull();
   });
 
+  it('reads Total UL as years and leftover months and ignores Remaining UL on load', () => {
+    const parsed = parseTcaListing([
+      'TCA asset number,Description,Total UL,Expired UL,Remaining UL',
+      'AS-1,Well pad,17 yr · 9 mo,5 yr · 3 mo,12 yr · 6 mo',
+    ].join('\n'));
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.extraNames).toEqual([]);
+    expect(parsed.rows[0].totalUl).toBe(17.75);
+    expect(parsed.rows[0].expiredUl).toBe(5.25);
+  });
+
   it('refuses Expired UL greater than Total UL', () => {
     const parsed = parseTcaListing([
       'TCA asset number,Total UL,Expired UL',
@@ -312,6 +323,7 @@ describe('master TCA listing Excel template', () => {
       'Net book value',
       'Total UL',
       'Expired UL',
+      'Remaining UL',
       'Site',
       'Asset status',
       'Scope',
@@ -324,6 +336,7 @@ describe('master TCA listing Excel template', () => {
     expect(example?.[headers.indexOf('Net book value')]).toBe('1300000');
     expect(example?.[headers.indexOf('Total UL')]).toBe('25');
     expect(example?.[headers.indexOf('Expired UL')]).toBe('10');
+    expect(example?.[headers.indexOf('Remaining UL')]).toBe('15');
     expect(example?.[headers.indexOf('Asset status')]).toBe('Active');
   });
 
@@ -352,6 +365,7 @@ describe('master TCA listing Excel template', () => {
     expect(rows[0][headers.indexOf('Net book value')]).toBe(1_300_000);
     expect(rows[0][headers.indexOf('Total UL')]).toBe(25);
     expect(rows[0][headers.indexOf('Expired UL')]).toBe(10);
+    expect(rows[0][headers.indexOf('Remaining UL')]).toBe(15);
     expect(rows[0][headers.indexOf('Asset status')]).toBe('Unproductive');
   });
 

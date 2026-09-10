@@ -8,11 +8,10 @@
  * A term revision does not silently change UL — it raises a pending flag.
  */
 
-import { isValidDate, nextDay, termYears, addTermYears, type DayCount } from '../engine/dates';
+import { isValidDate, nextDay, priorYearEnd, termYears, addTermYears, type DayCount } from '../engine/dates';
 import { settlementAsAt, settlementInForce, type Obligation } from '../engine/derive';
 import type { ObligationEvent } from '../engine/rollforward';
 import { years as formatYears, num, parseNumber } from './format';
-import { remainingUl } from './openingLoad';
 import type { CalendarType, Period } from './periods';
 import type { ReportingUnit } from './types';
 
@@ -59,13 +58,58 @@ export function yearsToPeriods(yearsVal: number, calendar: CalendarType | string
   return round4(yearsVal * periodsPerYear(calendar));
 }
 
-/** "15 yr · 180 mo" — years and the calendar's periods. */
+export interface UlParts {
+  years: number;
+  months: number;
+}
+
+/** Whole years and leftover months. 17.75 years is 17 yr · 9 mo. */
+export function splitUlYears(yearsVal: number): UlParts {
+  const sign = yearsVal < 0 || Object.is(yearsVal, -0) ? -1 : 1;
+  const abs = Math.abs(yearsVal);
+  const monthsTotal = round4(abs * 12);
+  let years = Math.floor(monthsTotal / 12 + 1e-9);
+  let months = round4(monthsTotal - years * 12);
+  if (months >= 12 - 1e-9) {
+    years += 1;
+    months = 0;
+  }
+  if (Math.abs(months) < 1e-9) months = 0;
+  return { years: sign * years, months: sign * months };
+}
+
+export function yearsFromUlParts(years: number, months: number): number {
+  return round4(years + months / 12);
+}
+
+/**
+ * Years from a listing or form value. "30", "17.75", and "17 yr · 9 mo" all load.
+ */
+export function parseUlYears(raw: string | number | null | undefined): number {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : NaN;
+  const s = String(raw ?? '').trim();
+  if (!s) return NaN;
+  if (/yr|year|mo|month|·/i.test(s)) {
+    const compact = s.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+    const m = compact.match(/^(-?\d+(?:\.\d+)?)\s*(?:yr|yrs|y|year|years)?\s*(?:[·;]|and)?\s*(-?\d+(?:\.\d+)?)?\s*(?:mo|mos|m|month|months)?$/i);
+    if (m) {
+      const y = Number(m[1]);
+      const mo = m[2] != null && m[2] !== '' ? Number(m[2]) : 0;
+      if (Number.isFinite(y) && Number.isFinite(mo)) return yearsFromUlParts(y, mo);
+    }
+    return NaN;
+  }
+  return parseNumber(s);
+}
+
+/** "17 yr · 9 mo" — whole years and leftover months so a partial year is readable. */
 export function formatUl(
   yearsVal: number | null | undefined,
-  calendar: CalendarType | string | undefined,
+  _calendar?: CalendarType | string,
 ): string {
   if (yearsVal == null || !Number.isFinite(yearsVal)) return '—';
-  return `${formatYears(yearsVal)} · ${num(yearsToPeriods(yearsVal, calendar), 2)} ${periodUnit(calendar)}`;
+  const { years, months } = splitUlYears(yearsVal);
+  return `${num(years)} yr · ${num(months, 2)} mo`;
 }
 
 function openingExpired(o: Obligation): number | null {
@@ -118,10 +162,10 @@ export function usefulLifeAsAt(
   const openExpired = openingExpired(o);
   if (total == null || openExpired == null) {
     return {
-      totalYears: total, expiredYears: openExpired, remainingYears: remainingUl(o),
+      totalYears: total, expiredYears: openExpired, remainingYears: remainingUlYears(total, openExpired),
       totalPeriods: total == null ? null : yearsToPeriods(total, calendar),
       expiredPeriods: openExpired == null ? null : yearsToPeriods(openExpired, calendar),
-      remainingPeriods: remainingUl(o) == null ? null : yearsToPeriods(remainingUl(o)!, calendar),
+      remainingPeriods: remainingUlYears(total, openExpired) == null ? null : yearsToPeriods(remainingUlYears(total, openExpired)!, calendar),
     };
   }
   const expired = round4(Math.min(total, Math.max(0, openExpired + amortYearsOnLedger(o, events, periods, unit, asAt, exclusive))));
@@ -162,9 +206,9 @@ export type TcaAroUlGapKind = 'missing-aro-ul' | 'remaining-diff';
 
 /**
  * Master TCA remaining life versus the linked ARO remaining as-at.
- * Listing remaining is Total UL − Expired UL on the TCA. ARO remaining rolls
- * opening expired plus posted amortization. A gap means the listing changed
- * (or the obligation never received UL) and the ARO has not been aligned.
+ * Call this only after listing Expired UL has been proved from acquisition
+ * to conversion. Listing remaining is Total UL − Expired UL on the TCA.
+ * ARO remaining rolls opening expired plus posted amortization.
  */
 export interface TcaAroUlGap {
   kind: TcaAroUlGapKind;
@@ -197,7 +241,7 @@ export function tcaAroUlGap(
     return {
       kind: 'missing-aro-ul',
       tcaTotal, tcaExpired, tcaRemaining,
-      aroTotal: null, aroExpired: openingExpired(o), aroRemaining: remainingUl(o),
+      aroTotal: null, aroExpired: openingExpired(o), aroRemaining: remainingUlYears(asYears(o.totalUl), openingExpired(o)),
       proposedTotalUl: tcaTotal ?? tcaRemaining,
       proposedExpiredUl: tcaExpired,
     };
@@ -210,6 +254,48 @@ export function tcaAroUlGap(
     aroTotal: life.totalYears, aroExpired: expiredAsAt, aroRemaining: life.remainingYears,
     proposedTotalUl: round4(expiredAsAt + tcaRemaining),
     proposedExpiredUl: null,
+  };
+}
+
+/**
+ * Opening of the current fiscal year (prior year end / conversion as-at).
+ * Listing Expired UL is life consumed from the TCA acquisition date to this date.
+ * A same-day acquisition and conversion has zero expired UL.
+ */
+export function tcaListingAsAt(unit: Pick<ReportingUnit, 'fyEnd'>): string {
+  return priorYearEnd(unit.fyEnd);
+}
+
+export interface ListingExpiredUlIssue {
+  asAt: string;
+  expectedExpired: number;
+  listedExpired: number;
+  expectedRemaining: number | null;
+}
+
+/**
+ * Expired UL on the master TCA listing must equal elapsed life from acquisition
+ * to the listing as-at (conversion date, or the open period end). A newly
+ * acquired asset at conversion has zero expired UL. A wrong listing figure is
+ * corrected on the listing — it is not copied onto the ARO.
+ */
+export function listingExpiredUlIssue(
+  tca: { acquisitionDate?: string; totalUl?: number | null; expiredUl?: number | null },
+  asAt: string,
+  dayCount: DayCount | string,
+  calendar?: CalendarType | string,
+): ListingExpiredUlIssue | null {
+  const total = asYears(tca.totalUl);
+  if (total == null || !isValidDate(tca.acquisitionDate) || !isValidDate(asAt)) return null;
+  const expectedExpired = expiredUlFromAcquisition(tca.acquisitionDate, asAt, total, dayCount);
+  if (expectedExpired == null) return null;
+  const listedExpired = asYears(tca.expiredUl) ?? 0;
+  if (!ulOutOfLine(expectedExpired, listedExpired, periodYearFraction(calendar))) return null;
+  return {
+    asAt,
+    expectedExpired,
+    listedExpired,
+    expectedRemaining: remainingUlYears(total, expectedExpired),
   };
 }
 
@@ -418,7 +504,7 @@ export function newObligationUlIssue(opts: {
 /** Parse a Total UL / Expired UL draft field. Empty is omitted; non-numeric is invalid. */
 export function parseUlDraft(s: string): number | null | 'invalid' {
   if (!s.trim()) return null;
-  const n = parseNumber(s);
+  const n = parseUlYears(s);
   return Number.isFinite(n) ? n : 'invalid';
 }
 

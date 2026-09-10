@@ -19,6 +19,7 @@ import { canonicalizeObligationClasses, classCodeOf, classNameOf } from './asset
 import { parseNumber } from './format';
 import { applyLinkedObligationScope, assetNumberKey, openingObligations, openingTcaListing, syncTcaScopeFromObligations, tcaReconciled, tcaScopingGaps } from './tcaListing';
 import type { AppState, AroAssetClass, Obligation, TcaAsset, UnitData } from './types';
+import { parseUlYears } from './usefulLife';
 
 export interface ParsedOpeningRow {
   line: number;
@@ -132,7 +133,7 @@ function readNumber(
   problems: string[],
   who: string,
   label: string,
-  opts: { required?: boolean; nonNegative?: boolean; unit?: string } = {},
+  opts: { required?: boolean; nonNegative?: boolean; unit?: string; ul?: boolean } = {},
 ): number | null {
   const t = raw.trim();
   if (!t) {
@@ -141,9 +142,9 @@ function readNumber(
     }
     return null;
   }
-  const n = parseMoney(t);
-  if (n == null) {
-    problems.push(`${who}: ${label} "${t}" is not a number. Enter a number${opts.unit ? ` in ${opts.unit}` : ''} — currency symbols and commas are allowed.`);
+  const n = opts.ul ? parseUlYears(t) : parseMoney(t);
+  if (n == null || !Number.isFinite(n)) {
+    problems.push(`${who}: ${label} "${t}" is not a number. Enter a number${opts.unit ? ` in ${opts.unit}` : ''}${opts.ul ? ', or years and leftover months (17 yr · 9 mo)' : ''} — currency symbols and commas are allowed.`);
     return null;
   }
   if (opts.nonNegative && n < 0) {
@@ -332,8 +333,8 @@ export function parseOpeningRegister(text: string): OpeningParseResult {
     const openingArc = readNumber(cell('openingArc'), problems, who, 'ARO asset', { required: true });
     const openingAccumAmort = readNumber(cell('openingAccumAmort'), problems, who, 'Accumulated amortization', { required: true });
     const openingFv = readNumber(cell('openingFv'), problems, who, 'Opening future value');
-    const totalUl = readNumber(cell('totalUl'), problems, who, 'Total UL', { required: true, nonNegative: true, unit: 'years' });
-    const expiredUl = readNumber(cell('expiredUl'), problems, who, 'Expired UL', { required: true, nonNegative: true, unit: 'years' });
+    const totalUl = readNumber(cell('totalUl'), problems, who, 'Total UL', { required: true, nonNegative: true, unit: 'years', ul: true });
+    const expiredUl = readNumber(cell('expiredUl'), problems, who, 'Expired UL', { required: true, nonNegative: true, unit: 'years', ul: true });
     if (totalUl != null && expiredUl != null && expiredUl > totalUl) {
       problems.push(`${who}: Expired UL ${expiredUl} is greater than Total UL ${totalUl}. Expired UL cannot exceed Total UL.`);
     }
@@ -420,9 +421,9 @@ export function remainingUl(o: Obligation): number | null {
   return total - (expired ?? 0);
 }
 
-/** Conversion fields that must not move once opening balances are locked. */
+/** Conversion fields that must not move once opening balances are locked. ARO Total UL can still be changed on the ARO asset. */
 export const OPENING_BALANCE_FIELDS = [
-  'openingArc', 'openingAccumAmort', 'openingFv', 'totalUl', 'expiredUl',
+  'openingArc', 'openingAccumAmort', 'openingFv', 'expiredUl',
 ] as const;
 
 export function isOpeningBalanceField(key: string): boolean {
@@ -619,7 +620,7 @@ export function openingTemplateNotes(): string[][] {
     ['ARO asset number is optional. It is the retirement-cost asset identifier, distinct from the TCA asset number.'],
     ['Opening provision, ARO asset (NBV) and Accumulated amortization are required numbers (0 is allowed).'],
     ['ARO acquisition cost is NBV plus accumulated amortization. Leave it blank on load — the listing calculates it.'],
-    ['Total UL and Expired UL are required (years, 0 or more). Expired UL cannot exceed Total UL. Remaining UL is Total UL minus Expired UL; leave it blank on load.'],
+    ['Total UL and Expired UL are required (years, or years and leftover months such as 17 yr · 9 mo). Expired UL cannot exceed Total UL. Remaining UL is Total UL minus Expired UL; leave it blank on load.'],
     ['Dates, if present, as YYYY-MM-DD (for example 2027-03-31).'],
     ['Estimated cost and Opening future value are optional. Extra columns are optional.'],
     [],
@@ -647,9 +648,9 @@ export function openingTemplateNotes(): string[][] {
     ['ARO acquisition cost', 'Gross retirement-cost asset (NBV + accumulated amortization). Calculated on the listing and on export. Optional on load.'],
     ['Accumulated amortization', 'Contra to the retirement cost asset. Aliases: Accumulated depreciation, Accum amort.'],
     ['ARO asset', 'Converted NBV. Aliases: NBV, ARC, Retirement cost asset.'],
-    ['Total UL', 'Total useful life of the related asset, in years. Aliases: Total useful life, Useful life, UL.'],
-    ['Expired UL', 'Useful life already consumed, in years. Remaining UL = Total UL − Expired UL. Aliases: Expired useful life, Elapsed UL.'],
-    ['Remaining UL', 'Calculated. Total UL minus Expired UL. Leave blank on load.'],
+    ['Total UL', 'Total useful life of the related asset, in years or years and leftover months (17 yr · 9 mo). Defaults onto the ARO asset; change UL on the ARO asset if it differs. Aliases: Total useful life, Useful life, UL.'],
+    ['Expired UL', 'Useful life already consumed, in years or years and leftover months. Remaining UL = Total UL − Expired UL. Aliases: Expired useful life, Elapsed UL.'],
+    ['Remaining UL', 'Calculated. Total UL minus Expired UL, shown in years and leftover months. Leave blank on load.'],
     [],
     ['Extra columns'],
     ['Add any further heading to the right of Remaining UL — licence, UWI, operator, cost centre, and so on. Those columns stay on the register under your headings and can be used in reporting. The engine does not read them.'],

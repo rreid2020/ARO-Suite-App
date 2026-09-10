@@ -6,11 +6,13 @@ import { loadCurrentTcaListing, loadTcaListing, lockOpeningBalances, parseTcaLis
 import {
   applyCreateObligation,
   applyDisposeLinkedAro,
+  applyListingExpiredUl,
   applyTcaStatusToAro,
   applyUlFromTca,
   planTcaSync,
   uniqueObligationRef,
 } from '../tcaSync';
+import { expiredUlFromAcquisition, remainingUlYears, tcaListingAsAt } from '../usefulLife';
 import type { Account, PostingRule, TenantSettings } from '../types';
 import type { Curve } from '../../engine/curve';
 
@@ -90,7 +92,13 @@ function ready() {
   return { state, id, data };
 }
 
-const ulUnit = { dayCount: '30/360 US (DAYS360)', calendarType: 'Monthly (12)' as const };
+const ulUnit = { dayCount: '30/360 US (DAYS360)', calendarType: 'Monthly (12)' as const, fyEnd: '2027-03-31' };
+
+function proveListingExpired(asset: { acquisitionDate?: string; totalUl?: number | null; expiredUl?: number | null }, totalUl: number) {
+  asset.totalUl = totalUl;
+  const asAt = tcaListingAsAt(ulUnit);
+  asset.expiredUl = expiredUlFromAcquisition(asset.acquisitionDate ?? '', asAt, totalUl, ulUnit.dayCount);
+}
 
 function plan(data: ReturnType<typeof ready>['data']) {
   return planTcaSync(data, ulUnit);
@@ -188,35 +196,56 @@ describe('register → listing gaps', () => {
     expect(orphans[0].obligationIds).toEqual(['orphan-1']);
   });
 
-  it('aligns ARO remaining UL when the master TCA remaining life has moved', () => {
+  it('corrects listing expired UL when acquisition is the conversion date and does not copy it onto the ARO', () => {
     const { data } = ready();
     const well = data.tcaAssets.find((a) => a.assetNumber === 'AS-10001')!;
-    well.totalUl = 40;
-    well.expiredUl = 10;
+    well.acquisitionDate = '2026-03-31';
+    well.totalUl = 30;
+    well.expiredUl = 5;
+    const openingExpired = data.obligations[0].expiredUl;
+    const openingTotal = data.obligations[0].totalUl;
+    const listing = plan(data).filter((a) => a.kind === 'listing-ul');
+    expect(listing).toHaveLength(1);
+    expect(listing[0].foundOn).toBe('listing');
+    expect(listing[0].detail).toMatch(/Expired UL should be 0 yr/);
+    expect(plan(data).some((a) => a.kind === 'ul-mismatch')).toBe(false);
+    const msg = applyListingExpiredUl(data, listing[0], ulUnit);
+    expect(msg).toMatch(/^Corrected Expired UL on AS-10001 to 0 yr/);
+    expect(well.expiredUl).toBe(0);
+    expect(data.obligations[0].expiredUl).toBe(openingExpired);
+    expect(data.obligations[0].totalUl).toBe(openingTotal);
+    expect(plan(data).some((a) => a.kind === 'listing-ul')).toBe(false);
+  });
+
+  it('aligns ARO remaining UL when the master TCA remaining life has moved on a consistent listing', () => {
+    const { data } = ready();
+    const well = data.tcaAssets.find((a) => a.assetNumber === 'AS-10001')!;
+    proveListingExpired(well, 40);
+    expect(plan(data).some((a) => a.kind === 'listing-ul')).toBe(false);
     const actions = plan(data).filter((a) => a.kind === 'ul-mismatch');
     expect(actions).toHaveLength(1);
     expect(actions[0].foundOn).toBe('register');
     expect(actions[0].obligationIds).toEqual([data.obligations[0].id]);
+    const listingRemaining = remainingUlYears(well.totalUl, well.expiredUl)!;
     const msg = applyUlFromTca(data, actions[0], ulUnit);
     expect(msg).toMatch(/^Applied master TCA remaining UL/);
-    expect(data.obligations[0].totalUl).toBe(40);
     expect(data.obligations[0].expiredUl).toBe(10);
+    expect(data.obligations[0].totalUl).toBeCloseTo(10 + listingRemaining, 4);
     expect(plan(data).some((a) => a.kind === 'ul-mismatch')).toBe(false);
   });
 
-  it('copies listing UL onto an obligation that has none', () => {
+  it('copies listing UL onto an obligation that has none after listing expired is proved', () => {
     const { data } = ready();
     const o = data.obligations[0];
     delete o.totalUl;
     delete o.expiredUl;
     const well = data.tcaAssets.find((a) => a.assetNumber === 'AS-10001')!;
-    well.totalUl = 25;
-    well.expiredUl = 8;
+    proveListingExpired(well, 25);
     const action = plan(data).find((a) => a.kind === 'ul-mismatch')!;
     expect(action.detail).toMatch(/no ARO useful life/);
     applyUlFromTca(data, action, ulUnit);
     expect(o.totalUl).toBe(25);
-    expect(o.expiredUl).toBe(8);
+    expect(o.expiredUl).toBe(well.expiredUl);
     expect(plan(data).some((a) => a.kind === 'ul-mismatch')).toBe(false);
   });
 
@@ -224,6 +253,7 @@ describe('register → listing gaps', () => {
     const { data } = ready();
     data.tcaAssets[0] = { ...setTcaAssetStatus(data.tcaAssets[0], 'Disposed'), totalUl: 40, expiredUl: 10 };
     expect(plan(data).some((a) => a.kind === 'ul-mismatch')).toBe(false);
+    expect(plan(data).some((a) => a.kind === 'listing-ul')).toBe(false);
     expect(plan(data).some((a) => a.kind === 'dispose-aro')).toBe(true);
   });
 });

@@ -9,6 +9,7 @@
 import { isValidDate } from '../engine/dates';
 import { CENT } from '../engine/rollforward';
 import { parseNumber } from './format';
+import { parseUlYears, remainingUlYears } from './usefulLife';
 import type { Obligation, OpeningSnapshot, TcaAsset, TcaAssetStatus, TcaScope, AppState, UnitData } from './types';
 
 export interface ParsedTcaRow {
@@ -230,6 +231,7 @@ function classifyHeader(cells: string[]): { map: Record<string, number>; extras:
     else if (map.nbv == null && /^(net book value|nbv|net carrying amount)$/.test(n)) map.nbv = i;
     else if (map.expiredUl == null && /^(expired ul|expired useful life|elapsed ul|used ul|expired life|elapsed life)$/.test(n)) map.expiredUl = i;
     else if (map.totalUl == null && /^(total ul|total useful life|useful life|asset life|total life|ul)$/.test(n)) map.totalUl = i;
+    else if (map.remainingUl == null && /^(remaining ul|remaining useful life|remaining life)$/.test(n)) map.remainingUl = i;
     else if (map.site == null && /^(site|location)$/.test(n)) map.site = i;
     else if (map.assetStatus == null && /^(asset status|tca asset status|tca status|ppe status|status)$/.test(n)) map.assetStatus = i;
     else if (map.scope == null && /^(scope|scoping|in scope|aro scope)$/.test(n)) map.scope = i;
@@ -266,7 +268,7 @@ export function extraTcaColumnKey(name: string): string {
   return `${EXTRA_COL_PREFIX}${name}`;
 }
 
-export const TCA_TEMPLATE_COLUMNS: { header: string; field: keyof ParsedTcaRow | 'nbv' }[] = [
+export const TCA_TEMPLATE_COLUMNS: { header: string; field: keyof ParsedTcaRow | 'nbv' | 'remainingUl' }[] = [
   { header: 'TCA asset number', field: 'assetNumber' },
   { header: 'Description', field: 'description' },
   { header: 'TCA asset class', field: 'assetClass' },
@@ -276,6 +278,7 @@ export const TCA_TEMPLATE_COLUMNS: { header: string; field: keyof ParsedTcaRow |
   { header: 'Net book value', field: 'nbv' },
   { header: 'Total UL', field: 'totalUl' },
   { header: 'Expired UL', field: 'expiredUl' },
+  { header: 'Remaining UL', field: 'remainingUl' },
   { header: 'Site', field: 'site' },
   { header: 'Asset status', field: 'assetStatus' },
   { header: 'Scope', field: 'scope' },
@@ -310,6 +313,7 @@ export function tcaTemplateDataRows(assets: TcaAsset[], extraNames: string[] = [
       if (c.field === 'nbv') return tcaNbv(a);
       if (c.field === 'totalUl') return typeof a.totalUl === 'number' ? a.totalUl : '';
       if (c.field === 'expiredUl') return typeof a.expiredUl === 'number' ? a.expiredUl : '';
+      if (c.field === 'remainingUl') return remainingUlYears(a.totalUl, a.expiredUl) ?? '';
       if (c.field === 'site') return a.site;
       if (c.field === 'assetStatus') return tcaAssetStatusOf(a);
       return '';
@@ -337,13 +341,13 @@ export function tcaTemplateNotes(): string[][] {
     ['TCA asset number is required and must be unique on the listing. Alias: Asset number.'],
     ['Description, TCA asset class, acquisition date, acquisition cost, accumulated amortization, Total UL, Expired UL, site and asset status are optional. Extra columns are optional.'],
     ['Net book value is acquisition cost minus accumulated amortization. Leave it blank on load — the listing calculates it.'],
-    ['Total UL and Expired UL, when present, default the ARO asset useful life when a new obligation is created for that TCA. Remaining UL is Total UL minus Expired UL. Expected settlement must be at least remaining UL years after the cost estimate date.'],
+    ['Total UL and Expired UL, when present, default the ARO asset useful life when a new obligation is created for that TCA. Enter years, or years and leftover months (17 yr · 9 mo). Remaining UL is Total UL minus Expired UL — leave it blank on load; the listing calculates it. You can change UL on the ARO asset; do not edit UL on this listing except to correct Expired UL that does not match acquisition through conversion.'],
     ['Asset status is Active, Unproductive or Disposed. Blank loads as Active. Unproductive means the TCA is no longer in use; flag the related ARO asset on the ARO Register so later changes of estimate go to operating expense. Disposed means the TCA has left the books.'],
     ['Scope and Reason if out can be filled here or marked in the app after load.'],
     ['Dates, if present, as YYYY-MM-DD (for example 2008-06-15).'],
     [],
     ['Example row (do not leave this on the sheet you load)'],
-    ['AS-10001', 'Well 14-23 pad', 'Wells', '2008-06-15', '2100000', '800000', '1300000', '25', '10', 'North', 'Active', 'Undecided', ''],
+    ['AS-10001', 'Well 14-23 pad', 'Wells', '2008-06-15', '2100000', '800000', '1300000', '25', '10', '15', 'North', 'Active', 'Undecided', ''],
   ];
 }
 
@@ -450,9 +454,9 @@ export function parseTcaListing(text: string): TcaParseResult {
     const totalUlRaw = cell('totalUl');
     let totalUl: number | null = null;
     if (totalUlRaw) {
-      const n = parseNumber(totalUlRaw);
+      const n = parseUlYears(totalUlRaw);
       if (!Number.isFinite(n) || n < 0) {
-        problems.push(`${who}: Total UL "${totalUlRaw}" is not a non-negative number of years.`);
+        problems.push(`${who}: Total UL "${totalUlRaw}" is not a non-negative number of years (years and leftover months are allowed, for example 17 yr · 9 mo).`);
       } else {
         totalUl = n;
       }
@@ -461,9 +465,9 @@ export function parseTcaListing(text: string): TcaParseResult {
     const expiredUlRaw = cell('expiredUl');
     let expiredUl: number | null = null;
     if (expiredUlRaw) {
-      const n = parseNumber(expiredUlRaw);
+      const n = parseUlYears(expiredUlRaw);
       if (!Number.isFinite(n) || n < 0) {
-        problems.push(`${who}: Expired UL "${expiredUlRaw}" is not a non-negative number of years.`);
+        problems.push(`${who}: Expired UL "${expiredUlRaw}" is not a non-negative number of years (years and leftover months are allowed, for example 17 yr · 9 mo).`);
       } else {
         expiredUl = n;
       }
