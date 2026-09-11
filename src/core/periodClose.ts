@@ -28,8 +28,9 @@ import type { ObligationEvent } from '../engine/rollforward';
 import { unitCurve } from './measure';
 import { remainingUl } from './openingLoad';
 import { usefulLifeAsAt } from './usefulLife';
+import { canEdit, canPost, canReverse } from './authority';
 import { accountForRole, defaultCoding, suspenseAccount } from './posting';
-import type { Period } from './periods';
+import { canPostInto, type Period } from './periods';
 import type { AppState, JournalBatch, JournalLine, ReportingUnit, UnitData } from './types';
 
 export type MonthEndRun = 'accretion' | 'amortization';
@@ -487,4 +488,77 @@ export function createOrFillPeriodBatch(s: AppState, tenantId: string, unitId: s
   const draft = data.batches.find((b) => b.periodId === period.id && b.status === 'Draft');
   const emptyDraft = Boolean(draft && batchDebits(draft) < 0.005);
   return writeBatch(s, tenantId, unitId, data, period, toPost, emptyDraft ? draft : undefined);
+}
+
+/** Preparer approves a draft; reviewer or partner posts; partner reverses. */
+export function journalBatchTransitionRefusal(
+  batch: JournalBatch,
+  to: JournalBatch['status'],
+  opts: { role: string; period?: Period },
+): string | null {
+  if (to === 'Approved') {
+    if (batch.status !== 'Draft') return `${batch.number} is ${batch.status.toLowerCase()}, so it cannot be approved.`;
+    if (!canEdit(opts.role)) return `${batch.number} cannot be approved: this role does not prepare journals.`;
+  }
+  if (to === 'Posted') {
+    if (batch.status !== 'Approved') return `${batch.number} must be approved before it can post.`;
+    const check = canPostInto(opts.period);
+    if (!check.allowed) return check.reason;
+    if (!canPost(opts.role)) {
+      return `${batch.number} cannot post: posting needs a reviewer or a partner. A preparer approves, a reviewer or partner posts.`;
+    }
+  }
+  if (to === 'Reversed') {
+    if (batch.status !== 'Posted') return `${batch.number} is ${batch.status.toLowerCase()}, so it cannot be reversed.`;
+    if (!canReverse(opts.role)) {
+      return `${batch.number} cannot be reversed: reversal is an engagement partner action. A posted batch is immutable — correcting it is a reversal plus a new batch, both logged.`;
+    }
+  }
+  return null;
+}
+
+export function journalBatchTransitionAudit(
+  batch: JournalBatch,
+  to: JournalBatch['status'],
+  periodCode?: string,
+): { action: string; kind: 'write' | 'post' | 'reverse'; detail: string } {
+  if (to === 'Reversed') {
+    return {
+      action: 'Reverse batch',
+      kind: 'reverse',
+      detail: `${batch.number} reversed. The posted batch is immutable and stands; this is a reversal, and a new batch is needed to correct it.`,
+    };
+  }
+  if (to === 'Approved') {
+    return {
+      action: 'Approve batch',
+      kind: 'write',
+      detail: `${batch.number} approved by the preparer${periodCode ? ` in ${periodCode}` : ''}. It is not posted. A reviewer or partner still has to post it.`,
+    };
+  }
+  return {
+    action: 'Post batch',
+    kind: 'post',
+    detail: `${batch.number} posted${periodCode ? ` in ${periodCode}` : ''}.`,
+  };
+}
+
+export function applyJournalBatchStatus(
+  s: AppState,
+  unitId: string,
+  batchId: string,
+  to: JournalBatch['status'],
+  userName: string,
+  now = new Date().toISOString(),
+): string | null {
+  const x = s.data[unitId]?.batches.find((y) => y.id === batchId);
+  if (!x) return 'That journal batch is not on this reporting unit.';
+  x.status = to;
+  if (to === 'Posted') {
+    x.postedBy = userName;
+    x.postedAt = now;
+  }
+  if (to === 'Approved') x.approvedBy = userName;
+  if (to === 'Reversed') x.reversedBy = userName;
+  return null;
 }

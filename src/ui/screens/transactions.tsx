@@ -28,6 +28,7 @@ import { journalBatchForEvent } from '../../core/registerBooks';
 import { Obligation, Revision } from '../../core/types';
 import { REMEASUREMENT_REASONS } from '../../seed';
 import type { Rung } from '../../engine/ladder';
+import { JournalBatchCard, JournalStatusTag } from '../JournalBatchCard';
 import {
   Basis, Block, Empty, Field, JournalRef, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields,
   DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload,
@@ -382,7 +383,7 @@ export function TxEventHistory({
       <div className="kicker" style={{ marginBottom: 8 }}>{title}</div>
       {kind === 'cost' && events.length > 0 && (
         <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.5 }}>
-          Recorded is the amount entered, gross of contingency. Provision is that amount after contingency, inflation to settlement, and discounting to the reporting date. Open a row for the step-by-step formulas.
+          Recorded is the amount entered, gross of contingency. Provision is that amount after contingency, inflation to settlement, and discounting to the reporting date. Open a row for the journal and the step-by-step formulas.
         </p>
       )}
       {events.length === 0 ? (
@@ -392,29 +393,35 @@ export function TxEventHistory({
           rows={events}
           rowKey={(e) => e.id}
           noun={noun}
-          leading={showWalk ? {
+          leading={{
             width: 56,
             header: '',
             cell: (e) => (
               <button type="button" className="btn btn-ghost btn-sm"
                 aria-expanded={openId === e.id}
-                aria-label={`${openId === e.id ? 'Hide' : 'Show'} how ${e.id} posted`}
+                aria-label={`${openId === e.id ? 'Hide' : 'Show'} journal and details for ${e.id}`}
                 onClick={() => setOpenId(openId === e.id ? null : e.id)}>
                 {openId === e.id ? 'Close' : 'Open'}
               </button>
             ),
-          } : undefined}
-          expand={showWalk ? (e) => {
+          }}
+          expand={(e) => {
             if (openId !== e.id) return false;
-            const walk = revisionWalkForEvent(state, unit, obligation, e);
-            if (!walk) {
-              return <Empty>This posting is not tied to a recorded cost or term adjustment, so there is no chain to show.</Empty>;
-            }
-            return <WalkPanel walk={walk} posted={e.amount} currencyCode={unit.currency} />;
-          } : undefined}
+            const batch = journalBatchForEvent(e.id, data.batches);
+            const walk = showWalk ? revisionWalkForEvent(state, unit, obligation, e) : null;
+            return (
+              <div style={{ padding: '4px 0 2px' }}>
+                <JournalBatchCard batch={batch} />
+                {showWalk && !walk && (
+                  <Empty>This posting is not tied to a recorded cost or term adjustment, so there is no chain to show.</Empty>
+                )}
+                {walk && <WalkPanel walk={walk} posted={e.amount} currencyCode={unit.currency} />}
+              </div>
+            );
+          }}
           footer={
             <tr>
-              {showWalk ? <td /> : null}
+              <td />
               <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Total</td>
               <td />
               <td />
@@ -426,6 +433,7 @@ export function TxEventHistory({
               <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>
                 {currency(events.reduce((s, e) => s + e.amount, 0), unit.currency)}
               </td>
+              <td />
               <td />
               <td />
               <td />
@@ -455,6 +463,14 @@ export function TxEventHistory({
               key: 'jv', header: 'JV#',
               value: (e) => journalBatchForEvent(e.id, data.batches)?.number ?? '',
               cell: (e) => <JournalRef eventId={e.id} batches={data.batches} />,
+            },
+            {
+              key: 'jvStatus', header: 'JV status',
+              value: (e) => journalBatchForEvent(e.id, data.batches)?.status ?? '',
+              cell: (e) => {
+                const batch = journalBatchForEvent(e.id, data.batches);
+                return batch ? <JournalStatusTag status={batch.status} /> : <span className="muted">—</span>;
+              },
             },
             {
               key: 'reason', header: 'Reason',

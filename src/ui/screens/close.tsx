@@ -7,14 +7,14 @@ import React, { useMemo, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit, canPost, canReverse, roleById } from '../../core/authority';
-import { canPostInto } from '../../core/periods';
 import { derive } from '../../engine/derive';
 import { frameworkPolicy } from '../../engine/framework';
 import { curveOptionLabel } from '../../engine/curve';
 import { suggestedClosingCurve } from '../../core/createUnit';
 import { Block, Empty, Field, currency, num, parseNumber, SheetTable, Stats, Tag } from '../components';
+import { JournalBatchActions, JournalStatusTag } from '../JournalBatchCard';
 import { accountForRole, suspenseAccount } from '../../core/posting';
-import { JournalBatch, Obligation } from '../../core/types';
+import { Obligation } from '../../core/types';
 import {
   allocateMonthEnd, createOrFillPeriodBatch, monthEndRefusal, openPeriod, periodBatchRefusal, planMonthEnd,
   summariseByAccount,
@@ -397,49 +397,6 @@ export function Batches() {
       (s) => { createOrFillPeriodBatch(s, unit.tenantId, unit.id); });
   };
 
-  const act = (b: JournalBatch, to: JournalBatch['status']) => {
-    const period = data.periods.find((p) => p.id === b.periodId);
-    if (to === 'Posted') {
-      const check = canPostInto(period);
-      if (!check.allowed) { apply('Post batch', 'refused', check.reason, () => {}); return; }
-      if (!canPost(ui.role)) {
-        apply('Post batch', 'refused', `${b.number} cannot post: posting needs a reviewer or a partner. A preparer approves, a reviewer or partner posts.`, () => {});
-        return;
-      }
-    }
-    if (to === 'Reversed' && !canReverse(ui.role)) {
-      apply('Reverse batch', 'refused', `${b.number} cannot be reversed: reversal is an engagement partner action. A posted batch is immutable — correcting it is a reversal plus a new batch, both logged.`, () => {});
-      return;
-    }
-    apply(
-      to === 'Posted' ? 'Post batch' : to === 'Reversed' ? 'Reverse batch' : 'Approve batch',
-      to === 'Posted' ? 'post' : to === 'Reversed' ? 'reverse' : 'write',
-      to === 'Reversed'
-        ? `${b.number} reversed. The posted batch is immutable and stands; this is a reversal, and a new batch is needed to correct it.`
-        : to === 'Approved'
-          ? `${b.number} approved by the preparer in ${period?.code}. It is not posted. A reviewer or partner still has to post it.`
-          : `${b.number} posted in ${period?.code}.`,
-      (s) => {
-        const x = s.data[unit.id].batches.find((y) => y.id === b.id)!;
-        x.status = to;
-        if (to === 'Posted') { x.postedBy = ui.userName; x.postedAt = new Date().toISOString(); }
-        if (to === 'Approved') x.approvedBy = ui.userName;
-        if (to === 'Reversed') x.reversedBy = ui.userName;
-      });
-  };
-
-  const statusTag = (status: JournalBatch['status']) => (
-    <Tag kind={status === 'Posted' ? 'accent' : status === 'Reversed' ? 'bad' : 'warn'}>{status}</Tag>
-  );
-
-  const workflow = (b: JournalBatch) => (
-    <>
-      {b.status === 'Draft' && canEdit(ui.role) && <button className="btn btn-secondary btn-sm" onClick={() => act(b, 'Approved')}>Approve</button>}
-      {b.status === 'Approved' && <button className="btn btn-primary btn-sm" onClick={() => act(b, 'Posted')}>Post</button>}
-      {b.status === 'Posted' && <button className="btn btn-secondary btn-sm" onClick={() => act(b, 'Reversed')}>Reverse</button>}
-    </>
-  );
-
   const openBatch = (id: string) => {
     setUi({ sub: id });
     setDrillAccountId(null);
@@ -476,7 +433,7 @@ export function Batches() {
           <>
             <button className="btn btn-secondary btn-sm" onClick={() => { setUi({ sub: '' }); setDrillAccountId(null); }}>All batches</button>
             {drill && <button className="btn btn-secondary btn-sm" onClick={() => setDrillAccountId(null)}>Journal entry</button>}
-            {workflow(selected)}
+            <JournalBatchActions batch={selected} />
           </>
         )}>
         <Stats items={[
@@ -572,14 +529,14 @@ export function Batches() {
               </button>
             ) },
             { key: 'period', header: 'Period', value: (row) => row.period, cell: (row) => row.period },
-            { key: 'status', header: 'Status', value: (row) => row.b.status, cell: (row) => statusTag(row.b.status) },
+            { key: 'status', header: 'Status', value: (row) => row.b.status, cell: (row) => <JournalStatusTag status={row.b.status} /> },
             { key: 'debits', header: 'Debits', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.dr, cell: (row) => currency(row.dr, unit.currency) },
             { key: 'credits', header: 'Credits', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (row) => row.cr, cell: (row) => currency(row.cr, unit.currency) },
             { key: 'postedBy', header: 'Posted by', value: (row) => row.b.postedBy, cell: (row) => row.b.postedBy ?? '—' },
             { key: 'act', header: '', tdStyle: { display: 'flex', gap: 6 }, cell: (row) => (
               <>
                 <button className="btn btn-secondary btn-sm" onClick={() => openBatch(row.b.id)}>Open</button>
-                {workflow(row.b)}
+                <JournalBatchActions batch={row.b} />
               </>
             ) },
           ]}

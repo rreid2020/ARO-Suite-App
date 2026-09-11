@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { emptyAppState } from '../emptyState';
 import { addReportingUnit, updateReportingUnit } from '../createUnit';
 import {
-  accretionRateFor, allocateMonthEnd, createOrFillPeriodBatch, monthEndRefusal,
-  periodBatchRefusal, periodYearFraction, planMonthEnd, postedSides, provisionCarried, remainingDiscountTerm,
-  summariseByAccount,
+  accretionRateFor, allocateMonthEnd, applyJournalBatchStatus, createOrFillPeriodBatch,
+  journalBatchTransitionRefusal, monthEndRefusal, periodBatchRefusal, periodYearFraction, planMonthEnd,
+  postedSides, provisionCarried, remainingDiscountTerm, summariseByAccount,
 } from '../periodClose';
 import { ENGINE_POSTING_RULES } from '../../seed';
 import type { Account, JournalLine, PostingRule, TenantSettings } from '../types';
@@ -299,6 +299,35 @@ describe('create batch from the ledger', () => {
     expect(leftover.number).not.toBe(inYearNumber);
     expect(data.batches[1].lines.some((l) => data.events.find((e) => e.id === l.eventId)?.type === 'accretion')).toBe(true);
     expect(data.batches[0].lines.every((l) => data.events.find((e) => e.id === l.eventId)?.type !== 'accretion')).toBe(true);
+  });
+});
+
+describe('journal batch workflow', () => {
+  it('lets a preparer approve a draft but not post it', () => {
+    const { state, id, data } = ready();
+    postRevision(state, 't1', id, data.obligations[0].id, {
+      id: 'rev-1', kind: 'cost', amount: 100_000, date: '2026-04-15', reason: 'Scope change',
+    });
+    const batch = data.batches[0];
+    const period = data.periods[0];
+    expect(journalBatchTransitionRefusal(batch, 'Approved', { role: 'preparer', period })).toBeNull();
+    expect(journalBatchTransitionRefusal(batch, 'Posted', { role: 'preparer', period })).toMatch(/must be approved/);
+    expect(applyJournalBatchStatus(state, id, batch.id, 'Approved', 'Ada')).toBeNull();
+    expect(batch.status).toBe('Approved');
+    expect(batch.approvedBy).toBe('Ada');
+    expect(journalBatchTransitionRefusal(batch, 'Posted', { role: 'preparer', period })).toMatch(/reviewer or a partner/);
+    expect(journalBatchTransitionRefusal(batch, 'Posted', { role: 'reviewer', period })).toBeNull();
+  });
+
+  it('refuses posting into a closed period', () => {
+    const { state, id, data } = ready();
+    postRevision(state, 't1', id, data.obligations[0].id, {
+      id: 'rev-1', kind: 'cost', amount: 100_000, date: '2026-04-15', reason: 'Scope change',
+    });
+    const batch = data.batches[0];
+    applyJournalBatchStatus(state, id, batch.id, 'Approved', 'Ada');
+    data.periods[0].status = 'Closed';
+    expect(journalBatchTransitionRefusal(batch, 'Posted', { role: 'reviewer', period: data.periods[0] })).toMatch(/closed/);
   });
 });
 
