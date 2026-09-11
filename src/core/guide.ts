@@ -278,7 +278,7 @@ const FIRM: Guide = {
       id: 'disclose',
       title: '5. Disclose the movement',
       body: [
-        'Roll-forward & disclosure: opening, then settlement, accretion on existing ARO, change of estimate, new ARO and accretion on new ARO. The event-ledger identity still foots per period and for the year.',
+        'Roll-forward & disclosure: opening, then settlement, accretion on existing ARO, change of estimate, new ARO and accretion on new ARO. The period table is the same lines split by period; the year totals are the consolidated view.',
       ],
     },
   ],

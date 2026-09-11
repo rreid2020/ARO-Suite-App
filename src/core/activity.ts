@@ -4,13 +4,13 @@
  * Opening is the locked converted provision. In-year activity is classified as
  * settlement, accretion on existing ARO, change of estimate on existing ARO
  * (cost, term, write-off, year-end mass update), new ARO, and accretion on new
- * ARO. The identity roll-forward on Report stays the event-ledger control;
- * this statement is the go-forward disclosure split.
+ * ARO. Both the consolidated statement and the period breakdown are this same
+ * classification of the event ledger — the year is the sum of the periods.
  */
 
-import type { Derived } from '../engine/derive';
 import { CENT, type ObligationEvent } from '../engine/rollforward';
-import { openingArcTotal, openingProvisionTotal } from './openingLoad';
+import { openingArcTotal } from './openingLoad';
+import type { Period } from './periods';
 import type { Obligation } from './types';
 
 export interface ActivityLine {
@@ -39,7 +39,35 @@ export interface ActivityStatement {
   lines: ActivityLine[];
 }
 
+export interface PeriodActivity extends ActivityStatement {
+  periodId: string;
+  code: string;
+}
+
+/** One disclosure line: the consolidated table’s rows, the period table’s columns. */
+export const ACTIVITY_COLUMNS: {
+  key: keyof Pick<ActivityStatement,
+    | 'openingProvision' | 'settlement' | 'accretionExisting'
+    | 'costAdjustments' | 'termAdjustments' | 'writeOffs' | 'massUpdate'
+    | 'newAro' | 'accretionNew' | 'fx' | 'closing'>;
+  label: string;
+  group: ActivityLine['group'];
+}[] = [
+  { key: 'openingProvision', label: 'Opening balances', group: 'Opening' },
+  { key: 'settlement', label: 'Settlement', group: 'Existing' },
+  { key: 'accretionExisting', label: 'Accretion on existing ARO', group: 'Existing' },
+  { key: 'costAdjustments', label: 'Change of estimate — cost adjustments', group: 'Existing' },
+  { key: 'termAdjustments', label: 'Change of estimate — term adjustments', group: 'Existing' },
+  { key: 'writeOffs', label: 'Change of estimate — write-offs', group: 'Existing' },
+  { key: 'massUpdate', label: 'Change of estimate — year-end mass update (inflation and interest rates)', group: 'Existing' },
+  { key: 'newAro', label: 'New ARO', group: 'New' },
+  { key: 'accretionNew', label: 'Accretion on new ARO', group: 'New' },
+  { key: 'fx', label: 'Exchange differences', group: 'New' },
+  { key: 'closing', label: 'Closing', group: 'Closing' },
+];
+
 const WRITE_OFF = /write[\s-]?off/i;
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function isExistingAro(o: Obligation, events: ObligationEvent[]): boolean {
   const openingIds = new Set(events.filter((e) => e.type === 'opening').map((e) => e.obligationId));
@@ -100,81 +128,120 @@ export function txHistoryEvents(o: Obligation, events: ObligationEvent[], kind: 
   }));
 }
 
-function sum(events: ObligationEvent[], type: ObligationEvent['type'], ids?: Set<string>): number {
-  return events
-    .filter((e) => e.type === type && (!ids || ids.has(e.obligationId)))
-    .reduce((s, e) => s + e.amount, 0);
+function existingObligationIds(events: ObligationEvent[]): Set<string> | null {
+  const ids = new Set(events.filter((e) => e.type === 'opening').map((e) => e.obligationId));
+  return ids.size ? ids : null;
 }
 
-export function activityStatement(
-  obligations: Obligation[],
-  events: ObligationEvent[],
-  derivedById: Map<string, Derived>,
-  measuredTotal: number,
+function isExistingId(obligationId: string, existingIds: Set<string> | null): boolean {
+  if (!existingIds) return true;
+  return existingIds.has(obligationId);
+}
+
+function linesFrom(stmt: ActivityStatement): ActivityLine[] {
+  return ACTIVITY_COLUMNS.map((c) => ({
+    key: c.key,
+    label: c.label,
+    group: c.group,
+    amount: stmt[c.key],
+  }));
+}
+
+function finish(
+  amounts: Omit<ActivityStatement, 'closing' | 'measuredClosing' | 'residual' | 'foots' | 'lines'>,
+  measuredClosing: number | null,
 ): ActivityStatement {
-  const existing = obligations.filter((o) => isExistingAro(o, events));
-  const existingIds = new Set(existing.map((o) => o.id));
-  const newcomers = obligations.filter((o) => o.status !== 'Scoped out' && !existingIds.has(o.id));
-  const newIds = new Set(newcomers.map((o) => o.id));
+  const closing = round2(
+    amounts.openingProvision
+    + amounts.settlement
+    + amounts.accretionExisting
+    + amounts.costAdjustments
+    + amounts.termAdjustments
+    + amounts.writeOffs
+    + amounts.massUpdate
+    + amounts.newAro
+    + amounts.accretionNew
+    + amounts.fx,
+  );
+  const residual = measuredClosing === null ? 0 : round2(measuredClosing - closing);
+  const stmt: ActivityStatement = {
+    ...amounts,
+    closing,
+    measuredClosing: measuredClosing ?? closing,
+    residual,
+    foots: Math.abs(residual) <= CENT,
+    lines: [],
+  };
+  stmt.lines = linesFrom(stmt);
+  return stmt;
+}
 
-  const openingProvision = openingProvisionTotal(events);
-  const openingArc = openingArcTotal(obligations);
-  const settlement = sum(events, 'settlement') + sum(events, 'disposal');
-  const accretionExisting = sum(events, 'accretion', existingIds);
-  const accretionNew = sum(events, 'accretion', newIds);
-  const fx = sum(events, 'fx');
+/**
+ * Classify a slice of the event ledger into the disclosure lines. Existing vs
+ * new ARO is taken from the full ledger (opening events), so a later period’s
+ * accretion on a new obligation stays on New ARO.
+ */
+export function activityFromEvents(
+  obligations: Obligation[],
+  allEvents: ObligationEvent[],
+  slice: ObligationEvent[],
+  measuredClosing: number | null,
+): ActivityStatement {
+  const byId = new Map(obligations.map((o) => [o.id, o]));
+  const existingIds = existingObligationIds(allEvents);
 
+  let openingProvision = 0;
+  let settlement = 0;
+  let accretionExisting = 0;
   let costAdjustments = 0;
   let termAdjustments = 0;
   let writeOffs = 0;
   let massUpdate = 0;
-  for (const o of existing) {
-    const d = derivedById.get(o.id);
-    if (!d) continue;
-    if (isWriteOff(o)) writeOffs += d.bridge.costEffect;
-    else costAdjustments += d.bridge.costEffect;
-    termAdjustments += d.bridge.timingEffect;
-    massUpdate += d.bridge.rateEffect + d.bridge.inflEffect;
-  }
-
   let newAro = 0;
-  for (const o of newcomers) {
-    const d = derivedById.get(o.id);
-    const pv = d?.pv ?? 0;
-    const accretion = events.filter((e) => e.obligationId === o.id && e.type === 'accretion').reduce((s, e) => s + e.amount, 0);
-    const settled = events.filter((e) => e.obligationId === o.id && e.type === 'settlement').reduce((s, e) => s + e.amount, 0);
-    newAro += pv - accretion - settled;
+  let accretionNew = 0;
+  let fx = 0;
+
+  for (const e of slice) {
+    switch (e.type) {
+      case 'opening':
+        openingProvision = round2(openingProvision + e.amount);
+        break;
+      case 'settlement':
+      case 'disposal':
+        settlement = round2(settlement + e.amount);
+        break;
+      case 'accretion':
+        if (isExistingId(e.obligationId, existingIds)) accretionExisting = round2(accretionExisting + e.amount);
+        else accretionNew = round2(accretionNew + e.amount);
+        break;
+      case 'addition':
+      case 'expense-recognition':
+        newAro = round2(newAro + e.amount);
+        break;
+      case 'fx':
+        fx = round2(fx + e.amount);
+        break;
+      case 'downward-excess':
+        costAdjustments = round2(costAdjustments + e.amount);
+        break;
+      case 'revision':
+      case 'revision-unproductive': {
+        const o = byId.get(e.obligationId);
+        const kind = o ? classifyRevisionEvent(o, e) : 'cost';
+        if (kind === 'term') termAdjustments = round2(termAdjustments + e.amount);
+        else if (kind === 'writeOff') writeOffs = round2(writeOffs + e.amount);
+        else if (kind === 'mass') massUpdate = round2(massUpdate + e.amount);
+        else costAdjustments = round2(costAdjustments + e.amount);
+        break;
+      }
+      default:
+        break;
+    }
   }
 
-  const closing = openingProvision
-    + settlement
-    + accretionExisting
-    + costAdjustments
-    + termAdjustments
-    + writeOffs
-    + massUpdate
-    + newAro
-    + accretionNew
-    + fx;
-  const residual = measuredTotal - closing;
-
-  const lines: ActivityLine[] = [
-    { key: 'opening', label: 'Opening balances', group: 'Opening', amount: openingProvision },
-    { key: 'settlement', label: 'Settlement', group: 'Existing', amount: settlement },
-    { key: 'accretionExisting', label: 'Accretion on existing ARO', group: 'Existing', amount: accretionExisting },
-    { key: 'cost', label: 'Change of estimate — cost adjustments', group: 'Existing', amount: costAdjustments },
-    { key: 'term', label: 'Change of estimate — term adjustments', group: 'Existing', amount: termAdjustments },
-    { key: 'writeOff', label: 'Change of estimate — write-offs', group: 'Existing', amount: writeOffs },
-    { key: 'mass', label: 'Change of estimate — year-end mass update (inflation and interest rates)', group: 'Existing', amount: massUpdate },
-    { key: 'newAro', label: 'New ARO', group: 'New', amount: newAro },
-    { key: 'accretionNew', label: 'Accretion on new ARO', group: 'New', amount: accretionNew },
-    { key: 'fx', label: 'Exchange differences', group: 'New', amount: fx },
-    { key: 'closing', label: 'Closing', group: 'Closing', amount: closing },
-  ];
-
-  return {
+  return finish({
     openingProvision,
-    openingArc,
+    openingArc: openingArcTotal(obligations),
     settlement,
     accretionExisting,
     costAdjustments,
@@ -184,10 +251,33 @@ export function activityStatement(
     newAro,
     accretionNew,
     fx,
-    closing,
-    measuredClosing: measuredTotal,
-    residual,
-    foots: Math.abs(residual) <= CENT,
-    lines,
+  }, measuredClosing);
+}
+
+export function activityStatement(
+  obligations: Obligation[],
+  events: ObligationEvent[],
+  measuredTotal: number,
+): ActivityStatement {
+  return activityFromEvents(obligations, events, events, measuredTotal);
+}
+
+/** Period slices of the same statement. Year totals equal the consolidated view. */
+export function activityByPeriod(
+  obligations: Obligation[],
+  events: ObligationEvent[],
+  periods: Pick<Period, 'id' | 'code'>[],
+  measuredTotal: number,
+): { periods: PeriodActivity[]; year: ActivityStatement } {
+  const ids = new Set(periods.map((p) => p.id));
+  const inYear = events.filter((e) => ids.has(e.periodId));
+  const year = activityFromEvents(obligations, events, inYear, measuredTotal);
+  return {
+    year,
+    periods: periods.map((p) => ({
+      periodId: p.id,
+      code: p.code,
+      ...activityFromEvents(obligations, events, inYear.filter((e) => e.periodId === p.id), null),
+    })),
   };
 }

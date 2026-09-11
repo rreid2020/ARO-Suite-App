@@ -6,12 +6,12 @@ import React, { useMemo, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit } from '../../core/authority';
-import { activityStatement } from '../../core/activity';
+import { ACTIVITY_COLUMNS, activityByPeriod } from '../../core/activity';
 import { openingLocked } from '../../core/openingLoad';
 import { derive } from '../../engine/derive';
 import { Curve } from '../../engine/curve';
 import { Obligation } from '../../core/types';
-import { Block, Empty, currency, pct, SheetTable, Stats, Tag } from '../components';
+import { Block, Empty, currency, pct, SheetTable, Stats } from '../components';
 import { groupToneClass } from '../groupTone';
 import { download, S } from '../../xlsx/write';
 
@@ -22,41 +22,32 @@ export function Rollf() {
   const unit = useUnit()!;
   const data = useUnitData()!;
   const derived = useDerived()!;
-  const a = derived.annual;
-  const activity = activityStatement(data.obligations, data.events, derived.byId, derived.total);
+  const { periods: periodRows, year: activity } = activityByPeriod(data.obligations, data.events, data.periods, derived.total);
   const locked = openingLocked(data);
 
   const exportRf = () => {
-    const head = ['Period', 'Opening', 'Additions', 'Accretion', 'Revisions', 'Settlements', 'FX', 'Closing', 'Foots'];
+    const moneyKeys = ACTIVITY_COLUMNS.map((c) => c.key);
+    const head = ['Period', ...ACTIVITY_COLUMNS.map((c) => c.label)];
     const out: any[][] = [
       [{ v: `${unit.entity} — ARO roll-forward`, s: S.title }],
       [`Year ending ${unit.fyEnd}`, `Currency ${unit.currency}`],
       [],
       head.map((h) => ({ v: h, s: S.head })),
     ];
-    const first = out.length + 1;
-    derived.periods.forEach((p, i) => {
-      const n = first + i;
-      const code = data.periods[i]?.code ?? p.periodId;
-      out.push([
-        code,
-        { v: p.opening, s: S.money }, { v: p.additions, s: S.money }, { v: p.accretion, s: S.money },
-        { v: p.revisions, s: S.money }, { v: p.settlements, s: S.money }, { v: p.fx, s: S.money },
-        { f: `SUM(B${n}:G${n})`, s: S.money },
-        { f: `IF(ABS(H${n}-SUM(B${n}:G${n}))<=0.005,"Yes","No")` },
-      ]);
-    });
-    const actHead = ['Line', 'Amount'];
+    for (const p of periodRows) {
+      out.push([p.code, ...moneyKeys.map((k) => ({ v: p[k], s: S.money }))]);
+    }
+    out.push([{ v: 'Year', s: S.head }, ...moneyKeys.map((k) => ({ v: activity[k], s: S.money }))]);
     const act: any[][] = [
       [{ v: `${unit.entity} — in-year ARO activity`, s: S.title }],
       [`Year ending ${unit.fyEnd}`, `Currency ${unit.currency}`],
       [],
-      actHead.map((h) => ({ v: h, s: S.head })),
+      ['Line', 'Amount'].map((h) => ({ v: h, s: S.head })),
       ...activity.lines.map((l) => [l.label, { v: l.amount, s: S.money }]),
     ];
     download(`${unit.entity.replace(/\W+/g, '-')}-rollforward-${unit.fyEnd}.xlsx`, [
       { name: 'Activity', rows: act, cols: [64, 16], freeze: 4 },
-      { name: 'Roll-forward', rows: out, cols: [14, 15, 14, 14, 14, 15, 12, 15, 9], freeze: 4 },
+      { name: 'By period', rows: out, cols: [14, ...ACTIVITY_COLUMNS.map(() => 16)], freeze: 4 },
     ]);
   };
 
@@ -73,7 +64,7 @@ export function Rollf() {
 
       <Block kicker="In-year activity" title="Opening balances to closing, after conversion"
         note={locked
-          ? 'Opening is the locked converted provision. Settlement and accretion come from the event ledger. Change of estimate on existing ARO is cost adjustments, term adjustments, write-offs, and the year-end mass update for inflation and interest rates. New ARO is initial recognition this year; accretion on those rows is shown separately.'
+          ? 'The year in one column. Settlement and accretion come from the event ledger. Change of estimate on existing ARO is cost adjustments, term adjustments, write-offs, and the year-end mass update for inflation and interest rates. New ARO is initial recognition this year; accretion on those rows is shown separately. The period table below is the same lines, split by period.'
           : 'Lock opening balances on Opening register after reconciling to the trial balance. Until then, opening on this statement is the converted provision loaded so far (or nil if none).'}
         actions={<button className="btn btn-secondary btn-sm" onClick={exportRf}>Export to Excel</button>}>
         <SheetTable
@@ -89,35 +80,39 @@ export function Rollf() {
         />
       </Block>
 
-      <Block kicker="Event-ledger identity" title="Opening to closing, per period and for the year"
-        note="Opening + additions + accretion + revisions + settlements + FX = closing, footing to the cent, with the periods summing to the year. It is computed from the event ledger, independently of the journals — the check that a batch's net movement equals closing less opening is only falsifiable if the two are derived separately.">
+      <Block kicker="In-year activity" title="Opening to closing, per period and for the year"
+        note="The same lines as the consolidated table, one column each. Year totals are that table. Opening sits in the period that holds the conversion events; later periods show the movements posted in that period.">
         <SheetTable
-          rows={derived.periods.map((p, i) => ({ ...p, code: data.periods[i]?.code }))}
+          rows={periodRows}
           rowKey={(p) => p.periodId}
           noun="periods"
           footer={
             <tr>
               <td className={groupToneClass('lead')} style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Year</td>
-              <td className={groupToneClass('opening', true, 'num')}>{currency(a.opening, unit.currency)}</td>
-              <td className={groupToneClass('activity', true, 'num')}>{currency(a.additions, unit.currency)}</td>
-              <td className={groupToneClass('activity', false, 'num')}>{currency(a.accretion, unit.currency)}</td>
-              <td className={groupToneClass('activity', false, 'num')}>{currency(a.revisions, unit.currency)}</td>
-              <td className={groupToneClass('activity', false, 'num')}>{currency(a.settlements, unit.currency)}</td>
-              <td className={groupToneClass('activity', false, 'num')}>{currency(a.fx, unit.currency)}</td>
-              <td className={groupToneClass('closing', true, 'num derived')} style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>{currency(a.closing, unit.currency)}</td>
-              <td>{a.foots ? <Tag kind="accent">Foots</Tag> : <Tag kind="bad">Out by {currency(a.residual, unit.currency)}</Tag>}</td>
+              {ACTIVITY_COLUMNS.map((c, i) => {
+                const start = i === 0 || ACTIVITY_COLUMNS[i - 1].group !== c.group;
+                const extra = c.key === 'closing' ? 'num derived' : 'num';
+                return (
+                  <td key={c.key} className={groupToneClass(c.group, start, extra)}
+                    style={c.key === 'closing' ? { fontFamily: 'var(--font-heading)', fontWeight: 800 } : undefined}>
+                    {currency(activity[c.key], unit.currency)}
+                  </td>
+                );
+              })}
             </tr>
           }
           columns={[
             { key: 'period', header: 'Period', value: (p) => p.code, cell: (p) => p.code, thClassName: groupToneClass('lead'), tdClassName: groupToneClass('lead') },
-            { key: 'opening', header: 'Opening', kind: 'number', thClassName: groupToneClass('opening', true, 'num'), tdClassName: groupToneClass('opening', true, 'num'), value: (p) => p.opening, cell: (p) => currency(p.opening, unit.currency) },
-            { key: 'additions', header: 'Additions', kind: 'number', thClassName: groupToneClass('activity', true, 'num'), tdClassName: groupToneClass('activity', true, 'num'), value: (p) => p.additions, cell: (p) => currency(p.additions, unit.currency) },
-            { key: 'accretion', header: 'Accretion', kind: 'number', thClassName: groupToneClass('activity', false, 'num'), tdClassName: groupToneClass('activity', false, 'num'), value: (p) => p.accretion, cell: (p) => currency(p.accretion, unit.currency) },
-            { key: 'revisions', header: 'Revisions', kind: 'number', thClassName: groupToneClass('activity', false, 'num'), tdClassName: groupToneClass('activity', false, 'num'), value: (p) => p.revisions, cell: (p) => currency(p.revisions, unit.currency) },
-            { key: 'settlements', header: 'Settlements', kind: 'number', thClassName: groupToneClass('activity', false, 'num'), tdClassName: groupToneClass('activity', false, 'num'), value: (p) => p.settlements, cell: (p) => currency(p.settlements, unit.currency) },
-            { key: 'fx', header: 'FX', kind: 'number', thClassName: groupToneClass('activity', false, 'num'), tdClassName: groupToneClass('activity', false, 'num'), value: (p) => p.fx, cell: (p) => currency(p.fx, unit.currency) },
-            { key: 'closing', header: 'Closing', kind: 'number', thClassName: groupToneClass('closing', true, 'num'), tdClassName: groupToneClass('closing', true, 'num derived'), value: (p) => p.closing, cell: (p) => currency(p.closing, unit.currency) },
-            { key: 'foots', header: 'Foots', value: (p) => p.measuredClosing === null ? '' : p.foots ? 'Yes' : 'No', cell: (p) => p.measuredClosing === null ? <span className="muted">—</span> : p.foots ? <Tag kind="accent">Yes</Tag> : <Tag kind="bad">No</Tag> },
+            ...ACTIVITY_COLUMNS.map((c) => ({
+              key: c.key,
+              header: c.label,
+              kind: 'number' as const,
+              group: c.group,
+              thClassName: 'num',
+              tdClassName: c.key === 'closing' ? 'num derived' : 'num',
+              value: (p: (typeof periodRows)[number]) => p[c.key],
+              cell: (p: (typeof periodRows)[number]) => currency(p[c.key], unit.currency),
+            })),
           ]}
         />
       </Block>
@@ -139,12 +134,15 @@ export function Rollf() {
             <p>
               The group recognises a provision for the present value of the estimated cost of dismantling and removing
               assets and restoring the sites on which they stand, where a legal or constructive obligation exists. The
-              provision at {unit.fyEnd} was {currency(a.closing, unit.currency)} ({currency(a.opening, unit.currency)} at the start of the year).
+              provision at {unit.fyEnd} was {currency(activity.closing, unit.currency)} ({currency(activity.openingProvision, unit.currency)} at the start of the year).
             </p>
             <p>
-              Movements in the year comprise additions of {currency(a.additions, unit.currency)}, unwinding of discount of {currency(a.accretion, unit.currency)},
-              changes in estimate of {currency(a.revisions, unit.currency)}, amounts utilised of {currency(Math.abs(a.settlements), unit.currency)} and exchange
-              differences of {currency(a.fx, unit.currency)}.
+              Movements in the year comprise settlement of {currency(activity.settlement, unit.currency)}, accretion on existing ARO of {currency(activity.accretionExisting, unit.currency)},
+              change of estimate of {currency(activity.costAdjustments + activity.termAdjustments + activity.writeOffs + activity.massUpdate, unit.currency)}
+              {' '}(cost adjustments {currency(activity.costAdjustments, unit.currency)}, term adjustments {currency(activity.termAdjustments, unit.currency)},
+              write-offs {currency(activity.writeOffs, unit.currency)}, year-end mass update {currency(activity.massUpdate, unit.currency)}),
+              new ARO of {currency(activity.newAro, unit.currency)}, accretion on new ARO of {currency(activity.accretionNew, unit.currency)}
+              and exchange differences of {currency(activity.fx, unit.currency)}.
             </p>
             <p>
               The provision is measured using a discount rate of {pct(derived.rows[0]?.rate ?? 0, 2)} taken from the{' '}
@@ -169,15 +167,18 @@ const maxDate = (d: ReturnType<typeof useDerived>) =>
 
 export function Py() {
   const unit = useUnit()!;
+  const data = useUnitData()!;
   const derived = useDerived()!;
-  const a = derived.annual;
+  const a = activityByPeriod(data.obligations, data.events, data.periods, derived.total).year;
+  const changeOfEstimate = a.costAdjustments + a.termAdjustments + a.writeOffs + a.massUpdate;
+  const accretion = a.accretionExisting + a.accretionNew;
 
   const rows = [
-    ['Provision at the year end', a.closing, a.opening],
-    ['Additions', a.additions, a.additions * 0.82],
-    ['Unwinding of discount', a.accretion, a.accretion * 0.91],
-    ['Changes in estimate', a.revisions, a.revisions * 1.4],
-    ['Amounts utilised', a.settlements, a.settlements * 0.6],
+    ['Provision at the year end', a.closing, a.openingProvision],
+    ['New ARO', a.newAro, a.newAro * 0.82],
+    ['Unwinding of discount', accretion, accretion * 0.91],
+    ['Changes in estimate', changeOfEstimate, changeOfEstimate * 1.4],
+    ['Amounts utilised', a.settlement, a.settlement * 0.6],
     ['Exchange differences', a.fx, a.fx * -0.3],
   ] as [string, number, number][];
 

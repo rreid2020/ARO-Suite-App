@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activityStatement, classifyRevisionEvent, existedAtOpening, isExistingAro, isWriteOff, txHistoryEvents } from '../activity';
-import type { Derived } from '../../engine/derive';
+import { activityByPeriod, activityStatement, classifyRevisionEvent, existedAtOpening, isExistingAro, isWriteOff, txHistoryEvents } from '../activity';
 import type { Obligation } from '../types';
 import type { ObligationEvent } from '../../engine/rollforward';
 
@@ -20,31 +19,6 @@ function ev(over: Partial<ObligationEvent> & Pick<ObligationEvent, 'id' | 'oblig
     periodId: 'p1',
     date: '2027-01-31',
     ...over,
-  };
-}
-
-function d(id: string, pv: number, bridge: Partial<Derived['bridge']> = {}): Derived {
-  return {
-    obligationId: id,
-    ref: id,
-    settlementUsed: '2035-12-31',
-    timingRevised: false,
-    costRevisions: 0,
-    direct: pv,
-    cost: pv,
-    leap: false,
-    mcd: '2026-12-31',
-    t1: 0, t2: 1, tD: 1,
-    cce: pv, fv: pv, curveTerm: 1, beyond: false, rateBasis: 'test', rate: 0.04, pv,
-    layers: [],
-    discounted: true,
-    ratePerLayer: false,
-    frameworkId: 'ifrs',
-    bridge: {
-      pvBase: pv, pvCostOnly: pv, pvTimingOnly: pv, pvRateOnly: pv,
-      costEffect: 0, timingEffect: 0, rateEffect: 0, inflEffect: 0, movement: 0,
-      ...bridge,
-    },
   };
 }
 
@@ -87,23 +61,24 @@ describe('classifyRevisionEvent', () => {
 });
 
 describe('activityStatement', () => {
-  it('opens from locked conversion events and splits in-year activity', () => {
-    const existing = o({ id: 'old', ref: 'ARO-1', adj: [{ id: 'c1', kind: 'cost', amount: 50, date: '2027-06-30', reason: 'Scope change' }] });
-    const newbie = o({ id: 'new', ref: 'ARO-2', status: 'In scope' });
-    const writtenOff = o({ id: 'wo', ref: 'ARO-3', adj: [{ id: 'w1', kind: 'cost', amount: -80, date: '2027-03-31', reason: 'Write-off' }] });
-    const events: ObligationEvent[] = [
-      ev({ id: 'o1', obligationId: 'old', type: 'opening', amount: 1_000 }),
-      ev({ id: 'o2', obligationId: 'wo', type: 'opening', amount: 200 }),
-      ev({ id: 's1', obligationId: 'old', type: 'settlement', amount: -100 }),
-      ev({ id: 'a1', obligationId: 'old', type: 'accretion', amount: 40 }),
-      ev({ id: 'a2', obligationId: 'new', type: 'accretion', amount: 5 }),
-    ];
-    const byId = new Map<string, Derived>([
-      ['old', d('old', 1_090, { costEffect: 50, timingEffect: 20, rateEffect: 10, inflEffect: 15, movement: 95 })],
-      ['wo', d('wo', 120, { costEffect: -80, movement: -80 })],
-      ['new', d('new', 55, {})],
-    ]);
-    const stmt = activityStatement([existing, newbie, writtenOff], events, byId, 1_265);
+  const existing = o({ id: 'old', ref: 'ARO-1', adj: [{ id: 'c1', kind: 'cost', amount: 50, date: '2027-06-30', reason: 'Scope change' }] });
+  const newbie = o({ id: 'new', ref: 'ARO-2', status: 'In scope' });
+  const writtenOff = o({ id: 'wo', ref: 'ARO-3', adj: [{ id: 'w1', kind: 'cost', amount: -80, date: '2027-03-31', reason: 'Write-off' }] });
+  const events: ObligationEvent[] = [
+    ev({ id: 'o1', obligationId: 'old', type: 'opening', amount: 1_000, periodId: 'p1' }),
+    ev({ id: 'o2', obligationId: 'wo', type: 'opening', amount: 200, periodId: 'p1' }),
+    ev({ id: 's1', obligationId: 'old', type: 'settlement', amount: -100, periodId: 'p1' }),
+    ev({ id: 'a1', obligationId: 'old', type: 'accretion', amount: 40, periodId: 'p1' }),
+    ev({ id: 'rev-c1', obligationId: 'old', type: 'revision', amount: 50, note: 'Cost adjustment in P01: Scope change.' }),
+    ev({ id: 'rev-t', obligationId: 'old', type: 'revision', amount: 20, note: 'Term adjustment in P01: Licence extension.' }),
+    ev({ id: 'rev-w1', obligationId: 'wo', type: 'revision', amount: -80, note: 'Cost adjustment in P01: Write-off.' }),
+    ev({ id: 'rev-m', obligationId: 'old', type: 'revision', amount: 25, note: 'Year-end revaluation onto the closing table.' }),
+    ev({ id: 'add', obligationId: 'new', type: 'addition', amount: 50, periodId: 'p2' }),
+    ev({ id: 'a2', obligationId: 'new', type: 'accretion', amount: 5, periodId: 'p2' }),
+  ];
+
+  it('opens from locked conversion events and splits in-year activity from the ledger', () => {
+    const stmt = activityStatement([existing, newbie, writtenOff], events, 1_210);
     expect(stmt.openingProvision).toBe(1_200);
     expect(stmt.settlement).toBe(-100);
     expect(stmt.accretionExisting).toBe(40);
@@ -114,7 +89,34 @@ describe('activityStatement', () => {
     expect(stmt.newAro).toBe(50);
     expect(stmt.accretionNew).toBe(5);
     expect(stmt.closing).toBe(1_210);
+    expect(stmt.foots).toBe(true);
     expect(isWriteOff(writtenOff)).toBe(true);
+  });
+
+  it('the period breakdown totals to the consolidated statement', () => {
+    const { periods, year } = activityByPeriod(
+      [existing, newbie, writtenOff],
+      events,
+      [{ id: 'p1', code: 'FY2027 P01' }, { id: 'p2', code: 'FY2027 P02' }],
+      1_210,
+    );
+    expect(year.openingProvision).toBe(1_200);
+    expect(year.newAro).toBe(50);
+    expect(year.accretionNew).toBe(5);
+    expect(year.closing).toBe(1_210);
+    expect(periods[0].openingProvision).toBe(1_200);
+    expect(periods[0].newAro).toBe(0);
+    expect(periods[1].openingProvision).toBe(0);
+    expect(periods[1].newAro).toBe(50);
+    expect(periods[0].settlement + periods[1].settlement).toBe(year.settlement);
+    expect(periods[0].accretionExisting + periods[1].accretionExisting).toBe(year.accretionExisting);
+    expect(periods[0].costAdjustments + periods[1].costAdjustments).toBe(year.costAdjustments);
+    expect(periods[0].closing + periods[1].closing).toBe(year.closing);
+    expect(year.lines.map((l) => l.amount)).toEqual([
+      year.openingProvision, year.settlement, year.accretionExisting,
+      year.costAdjustments, year.termAdjustments, year.writeOffs, year.massUpdate,
+      year.newAro, year.accretionNew, year.fx, year.closing,
+    ]);
   });
 });
 

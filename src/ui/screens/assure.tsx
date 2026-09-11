@@ -9,6 +9,7 @@ import { useDerived } from '../../core/useDerived';
 import { canEdit, canLockPeriod, roleById, signLevel } from '../../core/authority';
 import { YEAR_END_GATES, runGates, YearEndState } from '../../core/gates';
 import { Block, Empty, Field, currency, num, SheetTable, Stats, Tag } from '../components';
+import { ACTIVITY_COLUMNS, activityByPeriod } from '../../core/activity';
 import { download, S } from '../../xlsx/write';
 
 /* ══ Evidence & freeze ═════════════════════════════════════════════════ */
@@ -225,6 +226,7 @@ export function Complete() {
   const unit = useUnit()!;
   const data = useUnitData()!;
   const derived = useDerived()!;
+  const activity = activityByPeriod(data.obligations, data.events, data.periods, derived.total);
 
   const rows = derived.rows.map((d) => {
     const o = data.obligations.find((x) => x.id === d.obligationId)!;
@@ -284,15 +286,14 @@ export function Complete() {
       {
         name: 'Roll-forward',
         rows: [
-          ['Period', 'Opening', 'Additions', 'Accretion', 'Revisions', 'Settlements', 'FX', 'Closing'].map((h) => ({ v: h, s: S.head })),
-          ...derived.periods.map((p, i) => [
-            data.periods[i]?.code ?? p.periodId,
-            { v: p.opening, s: S.money }, { v: p.additions, s: S.money }, { v: p.accretion, s: S.money },
-            { v: p.revisions, s: S.money }, { v: p.settlements, s: S.money }, { v: p.fx, s: S.money },
-            { f: `SUM(B${i + 2}:G${i + 2})`, s: S.money },
+          ['Period', ...ACTIVITY_COLUMNS.map((c) => c.label)].map((h) => ({ v: h, s: S.head })),
+          ...activity.periods.map((p) => [
+            p.code,
+            ...ACTIVITY_COLUMNS.map((c) => ({ v: p[c.key], s: S.money })),
           ]),
+          [{ v: 'Year', s: S.head }, ...ACTIVITY_COLUMNS.map((c) => ({ v: activity.year[c.key], s: S.money }))],
         ] as never,
-        cols: [14, 15, 14, 14, 14, 15, 12, 15],
+        cols: [14, ...ACTIVITY_COLUMNS.map(() => 16)],
         freeze: 1,
       },
     ];

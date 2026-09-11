@@ -85,7 +85,7 @@ export const STEPS: StepDef[] = [
 
   // ── Report ─────────────────────────────────────────────────────────────
   { id: 'rollf', label: 'Roll-forward & disclosure', phase: 'Report', domain: 'register',
-    purpose: 'Opening balances, then in-year activity: settlement, accretion on existing ARO, change of estimate on existing ARO (cost, term, write-offs, year-end mass update), new ARO and accretion on new ARO. The event-ledger identity still foots per period and for the year.' },
+    purpose: 'Opening balances, then in-year activity: settlement, accretion on existing ARO, change of estimate on existing ARO (cost, term, write-offs, year-end mass update), new ARO and accretion on new ARO. The year is the consolidated view; the period table is the same lines split by period.' },
   { id: 'py', label: 'Comparatives', phase: 'Report', domain: 'register',
     purpose: 'This year against last, with the movement explained.' },
   { id: 'sens', label: 'Sensitivity', phase: 'Report', domain: 'assumptions',
