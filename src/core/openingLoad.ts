@@ -14,7 +14,7 @@
  * New obligations after this load are created in the app, not by a second extract.
  */
 
-import { isValidDate } from '../engine/dates';
+import { isValidDate, priorYearEnd } from '../engine/dates';
 import { CENT, type ObligationEvent } from '../engine/rollforward';
 import { canonicalizeObligationClasses, classCodeOf, classNameOf } from './assetClass';
 import { parseNumber } from './format';
@@ -604,9 +604,9 @@ export function estimatedCostOf(o: Obligation): number | '' {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Opening FV and PV from the engine, rounded to cents, for the opening event. */
+/** Opening FV and PV as at conversion (prior year end), rounded to cents. */
 export function measureOpeningBalances(s: AppState, unit: ReportingUnit, o: Obligation): { pv: number; fv: number } {
-  const m = measureObligation(s, unit, o);
+  const m = measureObligation(s, unit, o, priorYearEnd(unit.fyEnd));
   return { pv: round2(m.pv), fv: round2(m.fv) };
 }
 
@@ -651,10 +651,10 @@ export function openingTemplateNotes(): string[][] {
     ['Obligation Number and ARO asset number are assigned on load. Do not put them on this sheet. The obligation number is ARO- plus the TCA asset number; the ARO asset number is ARC- plus that number. A second obligation on the same TCA gets -2, -3, and so on. Headings Reference or ARO asset number still load if a legacy file includes them.'],
     ['TCA asset number is required. It is the link to the master TCA listing; that asset is in scope. Alias: Asset number.'],
     ['Estimated cost, ARO asset (NBV) and Accumulated amortization are required numbers (0 is allowed).'],
-    ['Opening future value and opening provision are calculated on load from estimated cost, cost estimate date, expected settlement, inflation, contingency, and the discount curve. Do not put them on this sheet. Headings Opening future value or Opening provision still load if a legacy file includes them; those amounts are not posted.'],
+    ['Opening future value and opening provision are calculated on load as at conversion (the prior year end), from estimated cost, cost estimate date, expected settlement, inflation, contingency, and the discount curve. Estimated cost is current-price cost at the cost estimate date — it is not rolled forward to this year end. Do not put FV or PV on this sheet. Headings Opening future value or Opening provision still load if a legacy file includes them; those amounts are not posted.'],
     ['ARO acquisition cost is NBV plus accumulated amortization. Leave it blank on load — the listing calculates it.'],
     ['Total UL and Expired UL are required (years, or years and leftover months such as 17 yr · 9 mo). Expired UL cannot exceed Total UL. Remaining UL is Total UL minus Expired UL; leave it blank on load.'],
-    ['Dates, if present, as YYYY-MM-DD (for example 2027-03-31). Blank cost estimate date and expected settlement default to the year end.'],
+    ['Dates, if present, as YYYY-MM-DD (for example 2026-03-31). Blank cost estimate date and expected settlement default to conversion (the prior year end).'],
     ['Extra columns are optional.'],
     [],
     ['Obligation columns'],
@@ -663,9 +663,9 @@ export function openingTemplateNotes(): string[][] {
     ['Basis', 'Legal or Constructive.'],
     ['Site', 'Alias: Location.'],
     ['Region', 'Aliases: Area, Jurisdiction.'],
-    ['Cost estimate date', 'Price date of the cost. Alias: Estimate date.'],
+    ['Cost estimate date', 'Price date of the cost. Alias: Estimate date. Leave blank when the estimated cost is already in conversion-year dollars — it defaults to the prior year end.'],
     ['Expected settlement', 'Planned retirement date. Aliases: Settlement date, Retirement date.'],
-    ['Estimated cost', 'Current-price cost. Required. Aliases: Direct cost, Cost, Current cost. Opening future value and opening provision are calculated from this amount on load.'],
+    ['Estimated cost', 'Current-price cost at the cost estimate date. Required. Aliases: Direct cost, Cost, Current cost. Opening future value and opening provision are measured as at conversion from this amount — not escalated to this year\'s year end.'],
     [],
     ['ARO and TCA asset columns'],
     ['TCA asset number', 'Required. The related tangible-capital-asset identifier on the master listing. Aliases: Asset number, Asset, Asset id, ANLN1.'],
@@ -732,7 +732,7 @@ export function loadOpeningRegister(
   const period = data.periods[0];
   if (!period) return `${unit.entity} needs a fiscal calendar before the opening register can load.`;
 
-  const fyEnd = unit.fyEnd;
+  const conversion = priorYearEnd(unit.fyEnd);
   const unmatched = [...data.obligations];
   let added = 0;
   let updated = 0;
@@ -755,8 +755,8 @@ export function loadOpeningRegister(
     const existing = takeExisting(row);
     const id = existing?.id ?? `o-${unitId}-${n + added}`;
     const cost = row.estimatedCost ?? 0;
-    const costDate = row.costEstimateDate || fyEnd;
-    const settle = row.settlementDate || fyEnd;
+    const costDate = row.costEstimateDate || conversion;
+    const settle = row.settlementDate || conversion;
     const lines = [{
       id: `${id}-open-cost`,
       description: 'Opening estimated cost',

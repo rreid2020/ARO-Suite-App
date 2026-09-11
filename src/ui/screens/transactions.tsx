@@ -382,7 +382,7 @@ export function TxEventHistory({
       <div className="kicker" style={{ marginBottom: 8 }}>{title}</div>
       {kind === 'cost' && events.length > 0 && (
         <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.5 }}>
-          Recorded is the amount entered, gross of contingency. Provision is that amount after contingency, inflation to settlement, and discounting to the year end. Open a row for the step-by-step formulas.
+          Recorded is the amount entered, gross of contingency. Provision is that amount after contingency, inflation to settlement, and discounting to the reporting date. Open a row for the step-by-step formulas.
         </p>
       )}
       {events.length === 0 ? (
@@ -520,7 +520,7 @@ function WalkPanel({ walk, posted, currencyCode }: { walk: RevisionWalk; posted:
     <div style={{ padding: '8px 0 4px' }}>
       <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.5 }}>
         {walk.kind === 'cost'
-          ? 'The recorded amount is gross of contingency. Contingency applies once, then the figure is inflated to settlement and discounted to the year end. That present value is the posted provision.'
+          ? 'The recorded amount is gross of contingency. Contingency applies once, then the figure is inflated to settlement and discounted to the reporting date. That present value is the posted provision.'
           : 'The posted provision is the change in present value from moving the expected settlement date. The whole obligation is repriced; it is not a scaled cost adjustment.'}
         {mismatch ? ' The steps use the curve and assumptions in force now. The posted amount is what was recorded.' : ''}
       </p>

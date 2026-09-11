@@ -97,7 +97,7 @@ export function ladderFor(
     {
       key: 't1',
       label: 'Escalation leg 1',
-      operator: termOperator('cost estimate date', o.costEstimateDate, 'year end', a.fyEnd, dc),
+      operator: termOperator('cost estimate date', o.costEstimateDate, 'as at', a.fyEnd, dc),
       value: d.t1,
       basis: '',
       kind: 'term',
@@ -105,7 +105,7 @@ export function ladderFor(
     },
     {
       key: 'cce',
-      label: 'Cost escalated to year end',
+      label: 'Cost escalated to reporting date',
       operator: `Cost × (1 + inflation ${pct(a.inflation)}) ^ leg 1`,
       value: d.cce,
       basis: 'ESCALATED',
@@ -117,7 +117,7 @@ export function ladderFor(
       label: 'Escalation leg 2',
       operator: d.leap
         ? termOperator('modified cost estimate date', d.mcd, 'settlement', d.settlementUsed, dc)
-        : termOperator('year end', a.fyEnd, 'settlement', d.settlementUsed, dc),
+        : termOperator('as at', a.fyEnd, 'settlement', d.settlementUsed, dc),
       value: d.t2,
       basis: '',
       kind: 'term',
@@ -138,7 +138,7 @@ export function ladderFor(
     {
       key: 'tD',
       label: 'Discount term',
-      operator: termOperator('year end', a.fyEnd, 'settlement', d.settlementUsed, dc),
+      operator: termOperator('as at', a.fyEnd, 'settlement', d.settlementUsed, dc),
       value: d.tD,
       basis: '',
       kind: 'term',
@@ -183,7 +183,7 @@ export function ladderFor(
     },
     {
       key: 'pv',
-      label: 'Provision at year end',
+      label: 'Provision as at',
       operator:
         d.discounted === false
           ? 'Discounting is not applied, so the provision equals cost at current prices'
@@ -191,7 +191,7 @@ export function ladderFor(
             ? (d.ratePerLayer
               ? 'Sum of each layer\'s future value at settlement ÷ (1 + locked rate) ^ remaining term'
               : 'Future value at settlement ÷ (1 + rate) ^ discount term')
-            : 'Settlement falls on or before the year end, so no discounting applies',
+            : 'Settlement falls on or before the as-at date, so no discounting applies',
       value: d.pv,
       basis: 'PV@FY-END',
       kind: 'money',

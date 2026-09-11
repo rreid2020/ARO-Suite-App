@@ -30,7 +30,7 @@ export interface DerivedUnit {
   invalid: { obligation: Obligation; reason: string }[];
 }
 
-export function useDerived(): DerivedUnit | null {
+export function useDerived(asAt?: string): DerivedUnit | null {
   const { state } = useStore();
   const unit = useUnit();
   const data = useUnitData();
@@ -40,7 +40,7 @@ export function useDerived(): DerivedUnit | null {
 
     const curve = unitCurve(state, unit) ?? null;
     const priorCurve = unitPriorCurve(state, unit) ?? null;
-    const assumptions = unitAssumptions(unit);
+    const assumptions = unitAssumptions(unit, asAt);
     const deriveOpts = unitDeriveOptions(state, unit);
 
     const invalid: DerivedUnit['invalid'] = [];
@@ -76,5 +76,5 @@ export function useDerived(): DerivedUnit | null {
       assumptions, curve, priorCurve, rows, byId, total, material,
       periods, annual: annualRollForward(periods), invalid,
     };
-  }, [state, unit, data]);
+  }, [state, unit, data, asAt]);
 }

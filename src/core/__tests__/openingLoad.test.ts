@@ -4,6 +4,7 @@ import { addReportingUnit } from '../createUnit';
 import { OPENING_TEMPLATE_COLUMNS, loadOpeningRegister, lockOpeningBlocked, measureOpeningBalances, obligationColumnNames, obligationReconciled, openingArcTotal, openingAroCostTotal, openingLocked, openingProvisionTotal, openingReconciled, openingTemplateDataRows, openingTemplateHeaders, openingTemplateNotes, parseOpeningRegister, remainingUl } from '../openingLoad';
 import { loadTcaListing, parseTcaListing } from '../tcaListing';
 import { obligationExtractColumns } from '../../ui/screens/openingListings';
+import { measureObligation } from '../measure';
 import type { TenantSettings } from '../types';
 
 function settings(): TenantSettings {
@@ -239,6 +240,38 @@ describe('loadOpeningRegister', () => {
     expect(openingProvisionTotal(state.data[id].events)).toBe(measured.pv);
     expect(measured.fv).toBe(110);
     expect(measured.pv).toBe(110);
+  });
+
+  it('measures opening as at conversion, without rolling estimated cost to this year end', () => {
+    const state = emptyAppState();
+    state.settings['t1'] = settings();
+    state.curves['t1'] = [{
+      id: 'cad', name: 'CAD zero', currency: 'CAD', source: 'test',
+      basis: 'Zero-coupon', interpolation: 'step', extrapolation: 'flat-last',
+      asAt: '2026-03-31',
+      points: [{ term: 1, rate: 0.03 }, { term: 15, rate: 0.04 }, { term: 25, rate: 0.042 }],
+    }];
+    const id = addReportingUnit(state, {
+      tenantId: 't1', entity: 'Infrastructure and Environment', fyEnd: '2027-03-31', currency: 'CAD',
+    });
+    const text = [
+      'Estimated cost,Cost estimate date,Expected settlement,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      '1000000,2026-03-31,2041-03-31,40,10,25,10,AS-1',
+    ].join('\n');
+    loadOpeningRegister(state, 't1', id, parseOpeningRegister(text), { filename: 'opening.csv', text });
+    const unit = state.units['t1'][0];
+    const o = state.data[id].obligations[0];
+    const atConversion = measureObligation(state, unit, o, '2026-03-31');
+    const atYearEnd = measureObligation(state, unit, o, unit.fyEnd);
+    expect(atConversion.t1).toBeCloseTo(0, 12);
+    expect(atConversion.cce).toBe(atConversion.cost);
+    expect(atConversion.cce).toBe(1_100_000);
+    expect(atYearEnd.cce).toBeGreaterThan(atConversion.cce);
+    const measured = measureOpeningBalances(state, unit, o);
+    expect(o.openingFv).toBe(measured.fv);
+    expect(openingProvisionTotal(state.data[id].events)).toBe(measured.pv);
+    expect(measured.pv).toBe(Math.round(atConversion.pv * 100) / 100);
+    expect(measured.pv).not.toBe(Math.round(atYearEnd.pv * 100) / 100);
   });
 
   it('ignores Opening future value and Opening provision on a legacy extract', () => {

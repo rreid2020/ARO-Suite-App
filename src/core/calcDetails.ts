@@ -45,9 +45,9 @@ function initialCost(o: Obligation): number {
   return typeof o.estimatedCost === 'number' ? o.estimatedCost : 0;
 }
 
-function termFromFyEnd(unit: ReportingUnit, settlement: string): number | null {
-  if (!settlement) return null;
-  return termYears(unit.fyEnd, settlement, unit.dayCount);
+function termFromAsAt(asAt: string, settlement: string, dayCount: string): number | null {
+  if (!settlement || !asAt) return null;
+  return termYears(asAt, settlement, dayCount);
 }
 
 /** Provision statement: baseline, then event-ledger books through the selected period. */
@@ -56,14 +56,15 @@ export function obligationCalcLines(
   books: RegisterBooks,
   d: Derived | undefined,
   unit: ReportingUnit,
+  asAt = unit.fyEnd,
 ): CalcDetailLine[] {
   const originalSettle = o.settlementDate;
   const adjustedSettle = d?.settlementUsed ?? settlementInForce(o);
   return [
     money('initialCost', 'Initial cost estimate', 'Baseline', initialCost(o)),
-    money('currentCost', 'Cost estimate in current year dollars', 'Baseline', d?.cce ?? null),
-    yearsLine('initialTerm', 'Initial term', termFromFyEnd(unit, originalSettle), originalSettle ? `settlement ${originalSettle}` : undefined),
-    yearsLine('adjustedTerm', 'Adjusted term', d?.tD ?? termFromFyEnd(unit, adjustedSettle), adjustedSettle ? `settlement ${adjustedSettle}` : undefined),
+    money('currentCost', 'Cost estimate as at reporting date', 'Baseline', d?.cce ?? null),
+    yearsLine('initialTerm', 'Initial term', termFromAsAt(asAt, originalSettle, unit.dayCount), originalSettle ? `settlement ${originalSettle}` : undefined),
+    yearsLine('adjustedTerm', 'Adjusted term', d?.tD ?? termFromAsAt(asAt, adjustedSettle, unit.dayCount), adjustedSettle ? `settlement ${adjustedSettle}` : undefined),
     money('opening', 'Opening provision', 'Opening', books.openingProvision),
     money('settlement', 'Settlement', 'Existing', books.settlement),
     money('accretion', 'Accretion on existing ARO', 'Existing', books.accretionExisting),
@@ -149,10 +150,10 @@ export function calcLineSource(
   const opened = openingEvents(o, events);
 
   if (key === 'currentCost') {
-    return { events: [], emptyNote: 'Current-year dollars escalate the recorded estimate to the year end. That is a measurement fact, not a posted event.' };
+    return { events: [], emptyNote: 'The recorded estimate is escalated to the reporting date. That is a measurement fact, not a posted event.' };
   }
   if (key === 'initialTerm' || key === 'adjustedTerm') {
-    return { events: [], emptyNote: 'Term is the years and months from the year end to settlement. That is a measurement fact, not a posted event.' };
+    return { events: [], emptyNote: 'Term is the years and months from the reporting date to settlement. That is a measurement fact, not a posted event.' };
   }
   if (key === 'totalUl' || key === 'expiredUl' || key === 'remainingUl') {
     return { events: [], emptyNote: 'Useful life is a measurement fact on the ARO asset, not a posted event.' };

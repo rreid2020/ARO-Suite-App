@@ -242,7 +242,7 @@ export function postNewAro(
     inProductiveUse: input.inProductiveUse !== false,
   };
 
-  const measured = measureObligation(s, unit, o);
+  const measured = measureObligation(s, unit, o, period.ends);
   if (!Number.isFinite(measured.pv)) {
     return 'The provision could not be measured from the inputs given.';
   }
@@ -306,9 +306,9 @@ export function postRevision(
     if (!rev.to || !isValidDate(rev.to)) return 'A timing revision needs a new settlement date.';
   }
 
-  const before = measureObligation(s, unit, o);
+  const before = measureObligation(s, unit, o, period.ends);
   let next: Obligation = { ...o, adj: [...(o.adj ?? []), rev] };
-  const after = measureObligation(s, unit, next);
+  const after = measureObligation(s, unit, next, period.ends);
   const amount = round2(after.pv - before.pv);
 
   if (rev.kind === 'term' && rev.to) {

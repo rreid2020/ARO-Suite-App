@@ -112,10 +112,10 @@ describe('period year fraction', () => {
 });
 
 describe('remaining discount term', () => {
-  it('uses remaining UL when settlement was defaulted to the year end', () => {
+  it('uses remaining UL when settlement was defaulted', () => {
     const { unit, data } = ready();
     const o = data.obligations[0];
-    expect(o.settlementDate).toBe('2027-03-31');
+    expect(o.settlementDate).toBe('2026-03-31');
     expect(remainingDiscountTerm(o, unit)).toBe(15);
     expect(accretionRateFor(o, unit, curve())).toBe(0.04);
   });

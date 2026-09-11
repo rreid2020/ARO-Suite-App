@@ -10,13 +10,18 @@ import { DayCount } from '../engine/dates';
 import { Assumptions, DeriveOptions, Derived, Obligation, derive } from '../engine/derive';
 import type { AppState, ReportingUnit } from './types';
 
-export function unitAssumptions(unit: ReportingUnit): Assumptions {
+/**
+ * Engine assumptions for one measurement. `asAt` is the valuation date the
+ * chain calls fyEnd: opening uses conversion (prior year end), in-year posting
+ * uses the period end, and year-end processes use the unit's financial year end.
+ */
+export function unitAssumptions(unit: ReportingUnit, asAt?: string): Assumptions {
   return {
     inflation: unit.inflation,
     contingency: unit.contingency,
     termConvention: unit.termConvention as TermConvention,
     dayCount: unit.dayCount as DayCount,
-    fyEnd: unit.fyEnd,
+    fyEnd: asAt || unit.fyEnd,
     priorInflation: unit.priorInflation,
     materialityUsd: unit.materialityUsd,
     materialityPct: unit.materialityPct,
@@ -51,6 +56,6 @@ export function unitDeriveOptions(s: AppState, unit: ReportingUnit): DeriveOptio
   };
 }
 
-export function measureObligation(s: AppState, unit: ReportingUnit, o: Obligation): Derived {
-  return derive(o, unitAssumptions(unit), unitDeriveOptions(s, unit));
+export function measureObligation(s: AppState, unit: ReportingUnit, o: Obligation, asAt?: string): Derived {
+  return derive(o, unitAssumptions(unit, asAt), unitDeriveOptions(s, unit));
 }

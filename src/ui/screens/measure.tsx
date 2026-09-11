@@ -57,12 +57,12 @@ export function ObligationExpand({
   const { state, ui, apply } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
-  const derived = useDerived()!;
   const editable = canEdit(ui.role);
   const open = openPeriod(data);
   const asAt = (asAtPeriodId ? data.periods.find((p) => p.id === asAtPeriodId) : undefined)
     ?? data.periods.filter((p) => p.fiscalYear === fiscalYear).sort((a, b) => a.no - b.no).at(-1)
     ?? open ?? data.periods[data.periods.length - 1];
+  const derived = useDerived(asAt?.ends)!;
   const [tab, setTab] = useState<ExpandTab>('accretion');
 
   const picked = data.obligations.find((o) => o.id === obligation.id) ?? obligation;
@@ -174,8 +174,8 @@ export function ObligationExpand({
             <DetailTable
               kicker="Obligation"
               title="Baseline and in-year movement"
-              note="Initial cost is the estimate as recorded. Current-year dollars escalate that estimate to the year end. Terms are from the year end to the original and adjusted settlement dates. Open a movement row to see the posted events that make up the total, including the posting JV#. Post a cost or term adjustment or a settlement from Transactions on this row."
-              rows={obligationCalcLines(picked, books, d, unit)}
+              note="Initial cost is the estimate as recorded. Cost as at the reporting date escalates that estimate to this period end, not this year's year end. Opening provision is the conversion measurement. Terms are from the reporting date to the original and adjusted settlement dates. Open a movement row to see the posted events that make up the total, including the posting JV#. Post a cost or term adjustment or a settlement from Transactions on this row."
+              rows={obligationCalcLines(picked, books, d, unit, asAt.ends)}
               currency={unit.currency}
               calendar={unit.calendarType}
               side="obligation"

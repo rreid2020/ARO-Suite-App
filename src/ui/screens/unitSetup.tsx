@@ -106,7 +106,7 @@ export function UnitSetup() {
               {CALENDAR_TYPES.map((c) => <option key={c}>{c}</option>)}
             </select>
           </Field>
-          <Field label="Inflation / escalation rate (%)" help="Escalates the cost estimate from its price date to the year end, and on to settlement. Enter 2.5 for 2.5%.">
+          <Field label="Inflation / escalation rate (%)" help="Escalates the cost estimate from its price date to the reporting date, and on to settlement. Opening is measured as at conversion, not rolled forward to this year's year end. Enter 2.5 for 2.5%.">
             <input className="input num" name="inflation" inputMode="decimal" value={inflation} disabled={!editable}
               onChange={(e) => setInflation(e.target.value)}
               onBlur={() => {
@@ -762,7 +762,7 @@ export function UnitOpening() {
       >
         {importing && allowed && !tcaLocked && (
           <div style={{ marginBottom: 16, padding: 12, background: 'var(--color-surface)' }}>
-            <Field label="Paste or import the opening register" help="Export the Excel template first. Load by saving the Obligation & ARO Asset Listing sheet as CSV, or copy that sheet (header row included) and paste it here. Obligation Number and ARO asset number are assigned on load — they are not on the template. Opening future value and opening provision are calculated on load from estimated cost, dates, inflation, contingency, and the discount curve. Every required field must be filled — if anything needed is missing or invalid, nothing is loaded and you will see how to fix each error. ARO acquisition cost is NBV plus accumulated amortization. Remaining useful life is Total UL minus Expired UL after a successful load.">
+            <Field label="Paste or import the opening register" help="Export the Excel template first. Load by saving the Obligation & ARO Asset Listing sheet as CSV, or copy that sheet (header row included) and paste it here. Obligation Number and ARO asset number are assigned on load — they are not on the template. Opening future value and opening provision are measured as at conversion (the prior year end) from estimated cost, dates, inflation, contingency, and the discount curve. Estimated cost is current-price cost at the cost estimate date; it is not rolled forward to this year's year end. Every required field must be filled — if anything needed is missing or invalid, nothing is loaded and you will see how to fix each error. ARO acquisition cost is NBV plus accumulated amortization. Remaining useful life is Total UL minus Expired UL after a successful load.">
               <textarea className="input" rows={7} value={paste} onChange={(e) => setPaste(e.target.value)}
                 placeholder={'Description,Obligation type,Basis,Site,Region,Cost estimate date,Expected settlement,Estimated cost,TCA asset number,ARO Asset Description,Asset acquisition date,ARO asset class code,ARO asset class name,ARO acquisition cost,Accumulated amortization,ARO asset,Total UL,Expired UL,Remaining UL\nWell abandonment,Wells,Legal,North,AB,2026-12-31,2038-06-30,1500000,AS-10001,Well 14-23 pad,2008-06-15,11010,Buildings,1200000,400000,800000,25,10,15'} />
               <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>

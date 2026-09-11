@@ -149,7 +149,6 @@ export function Register() {
   const { state, ui, write, apply, setUi } = useStore();
   const unit = useUnit();
   const data = useUnitData();
-  const derived = useDerived();
 
   const [set, setSet] = useState('Posted books');
   const [asAtId, setAsAtId] = useState<string | null>(null);
@@ -162,6 +161,12 @@ export function Register() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newAroOpen, setNewAroOpen] = useState(false);
   const open = openPeriod(data ?? { periods: [] });
+  const asAt = useMemo(() => {
+    if (!data?.periods.length) return undefined;
+    const picked = asAtId ? data.periods.find((p) => p.id === asAtId) : undefined;
+    return picked ?? openPeriod(data) ?? data.periods[data.periods.length - 1];
+  }, [data, asAtId]);
+  const derived = useDerived(asAt?.ends);
   const gridRef = useRef<HTMLTableElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -214,12 +219,6 @@ export function Register() {
     if (extraKeys.length) sets['Source extract'] = ['ref', 'description', ...extraKeys];
     return sets;
   }, [extraColDefs, tcaExtraColDefs]);
-
-  const asAt = useMemo(() => {
-    if (!data?.periods.length) return undefined;
-    const picked = asAtId ? data.periods.find((p) => p.id === asAtId) : undefined;
-    return picked ?? openPeriod(data) ?? data.periods[data.periods.length - 1];
-  }, [data, asAtId]);
 
   const fiscalYears = useMemo(() => {
     if (!data) return [];

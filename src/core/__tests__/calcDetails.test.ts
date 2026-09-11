@@ -77,6 +77,18 @@ describe('obligationCalcLines', () => {
     expect(byKey.closing.amount).toBe(1_030);
   });
 
+  it('measures terms from the reporting date, not this year end', () => {
+    const row = o();
+    const events = [ev({ id: 'open', type: 'opening', amount: 1_000 })];
+    const books = registerBooks(row, events, [p1], [], p1);
+    const d = { cce: 1_001_667, tD: 14.9167, settlementUsed: '2041-03-31' } as Derived;
+    const lines = obligationCalcLines(row, books, d, unit, p1.ends);
+    const byKey = Object.fromEntries(lines.map((l) => [l.key, l]));
+    expect(byKey.currentCost.label).toBe('Cost estimate as at reporting date');
+    expect(byKey.initialTerm.amount).toBeGreaterThan(14);
+    expect(byKey.initialTerm.amount).toBeLessThan(15);
+  });
+
   it('puts accretion on a newly created ARO onto Accretion on new ARO, not the existing line', () => {
     const row = o({ id: 'n1', openingArc: undefined });
     const events = [

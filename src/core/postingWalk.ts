@@ -3,7 +3,7 @@
  *
  * Cost adjustments are entered gross of contingency. The posted amount is the
  * change in present value: contingency, then inflation to settlement, then
- * discounting to the year end. Term adjustments reprice the whole obligation
+ * discounting to the reporting date. Term adjustments reprice the whole obligation
  * at the new settlement date. The walk uses the assumptions and curve in force
  * now, reconstructed through the revision that produced the event.
  */
@@ -129,5 +129,6 @@ export function revisionWalkForEvent(
 ): RevisionWalk | null {
   const rev = matchedRevision(o, e);
   if (!rev) return null;
-  return revisionWalk(o, rev, unitAssumptions(unit), unitDeriveOptions(s, unit));
+  const period = (s.data[unit.id]?.periods ?? []).find((p) => p.id === e.periodId);
+  return revisionWalk(o, rev, unitAssumptions(unit, period?.ends ?? e.date), unitDeriveOptions(s, unit));
 }

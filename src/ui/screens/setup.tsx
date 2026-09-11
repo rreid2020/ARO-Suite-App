@@ -193,7 +193,7 @@ function DefaultsStep({ allowed, onContinue }: { allowed: boolean; onContinue: (
         note="Inflation, contingency, the fiscal calendar, day count and settlement term rounding are starting values for a new reporting unit. Each unit then confirms or changes its own on Unit settings, then chart and posting, before Prepare. Saving here does not rewrite units you have already opened.">
       <form onSubmit={(e) => { e.preventDefault(); if (allowed) save(true); }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 14 }}>
-          <Field label="Inflation / escalation rate (%)" help="Escalates the cost estimate from its price date to the year end, and on to settlement. Enter 2.5 for 2.5%.">
+          <Field label="Inflation / escalation rate (%)" help="Escalates the cost estimate from its price date to the reporting date, and on to settlement. Enter 2.5 for 2.5%.">
             <input className="input num" name="inflation" inputMode="decimal" value={inflation} disabled={!allowed}
               onChange={(e) => setInflation(e.target.value)}
               onBlur={() => allowed && save(false)} />

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { emptyAppState } from '../emptyState';
 import { addReportingUnit, updateReportingUnit } from '../createUnit';
 import { postNewAro, postRevision, postSettlement, requireOpenPeriod } from '../inYear';
+import { measureObligation } from '../measure';
 import { loadOpeningRegister, openingArcTotal, parseOpeningRegister } from '../openingLoad';
 import { assetBooks } from '../periodClose';
 import type { Account, PostingRule, TenantSettings } from '../types';
@@ -102,6 +103,25 @@ describe('post new ARO', () => {
     const books = assetBooks(data.events, data.periods, created, data.periods[0]);
     expect(books.nbv).toBe(posted.amount);
     expect(books.additions).toBe(posted.amount);
+  });
+
+  it('measures a new ARO as at the open period end, not this year end', () => {
+    const { state, id, data } = ready();
+    const posted = postNewAro(state, 't1', id, {
+      ref: 'ARO-ASAT', description: 'Period-end measure', estimatedCost: 400_000,
+      costEstimateDate: '2026-04-01', settlementDate: '2041-04-01', aroseOn: '2026-04-12',
+      assetAcquisitionDate: '2026-04-01',
+      totalUl: 15,
+    });
+    expect(typeof posted).not.toBe('string');
+    if (typeof posted === 'string') throw new Error(posted);
+    const unit = state.units['t1'][0];
+    const created = data.obligations.find((o) => o.ref === 'ARO-ASAT')!;
+    const atPeriod = measureObligation(state, unit, created, data.periods[0].ends);
+    const atYearEnd = measureObligation(state, unit, created, unit.fyEnd);
+    expect(posted.amount).toBe(Math.round(atPeriod.pv * 100) / 100);
+    expect(atPeriod.cce).toBeLessThan(atYearEnd.cce);
+    expect(posted.amount).not.toBe(Math.round(atYearEnd.pv * 100) / 100);
   });
 
   it('charges a new obligation to expense when remaining UL is nil and the asset is not in use', () => {
@@ -319,6 +339,33 @@ describe('post cost and term adjustments', () => {
     expect(data.events.some((e) => e.type === 'revision' && e.note?.includes('Cost'))).toBe(true);
     expect(o.adj).toHaveLength(0);
     expect(data.obligations[0].adj).toHaveLength(1);
+  });
+
+  it('measures a cost adjustment as at the open period end, not this year end', () => {
+    const { state, id, data } = ready();
+    const created = postNewAro(state, 't1', id, {
+      ref: 'ARO-REV-ASAT', description: 'Has remaining term', estimatedCost: 400_000,
+      costEstimateDate: '2026-04-01', settlementDate: '2041-04-01', aroseOn: '2026-04-12',
+      assetAcquisitionDate: '2026-04-01',
+      totalUl: 15,
+    });
+    expect(typeof created).not.toBe('string');
+    if (typeof created === 'string') throw new Error(created);
+    const unit = state.units['t1'][0];
+    const o = data.obligations.find((x) => x.id === created.obligationId)!;
+    const periodEnd = data.periods[0].ends;
+    const beforePeriod = measureObligation(state, unit, o, periodEnd);
+    const beforeYear = measureObligation(state, unit, o, unit.fyEnd);
+    const posted = postRevision(state, 't1', id, o.id, {
+      id: 'rev-asat', kind: 'cost', amount: 50_000, date: '2026-04-20', reason: 'Scope change',
+    });
+    expect(typeof posted).not.toBe('string');
+    if (typeof posted === 'string') throw new Error(posted);
+    const after = data.obligations.find((x) => x.id === o.id)!;
+    const afterPeriod = measureObligation(state, unit, after, periodEnd);
+    const afterYear = measureObligation(state, unit, after, unit.fyEnd);
+    expect(posted.amount).toBe(Math.round((afterPeriod.pv - beforePeriod.pv) * 100) / 100);
+    expect(posted.amount).not.toBe(Math.round((afterYear.pv - beforeYear.pv) * 100) / 100);
   });
 
   it('writes a revision event for a term adjustment', () => {
