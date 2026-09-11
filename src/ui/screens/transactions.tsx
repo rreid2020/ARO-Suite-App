@@ -83,7 +83,7 @@ export function Transactions() {
         kicker="Transactions"
         title="Post into the open period"
         note={open
-          ? `These postings write the event ledger in ${open.code} (${open.starts} to ${open.ends}) when you record them. The same cost, term and settlement postings can be recorded from an expanded ARO register row. Accretion and amortization run later from Close → Month-end posting. The ARO register is the as-at books of what has already posted.`
+          ? `These postings write the event ledger in ${open.code} (${open.starts} to ${open.ends}) and a draft journal when you record them. The same cost, term and settlement postings can be recorded from an expanded ARO register row. Accretion and amortization still run later from Close → Month-end posting. The ARO register is the as-at books of what has already posted.`
           : 'Open a period on Periods & close before posting. New obligations, cost and term adjustments, and settlements all post into the open period.'}
       >
         <div className="register-tab-groups" style={{ marginBottom: 16 }}>
@@ -121,7 +121,7 @@ export function Transactions() {
       </Block>
 
       <Block kicker={open ? open.code : 'Ledger'} title={`${periodEvents.length} in-period posting${periodEvents.length === 1 ? '' : 's'}`}
-        note="New ARO, cost and term adjustments, and settlements recorded in the open period. Click a JV# to open the journal batch. Month-end accretion and amortization are allocated separately.">
+        note="New ARO, cost and term adjustments, settlements and retirements recorded in the open period. Each one creates a draft journal when you record it — click a JV# to open it. Month-end accretion and amortization are allocated separately.">
         {periodEvents.length === 0 ? (
           <Empty>Nothing posted in this period yet.</Empty>
         ) : (
@@ -227,7 +227,7 @@ export function NewObligationForm() {
         ? `Provision and ARO asset ${currency(probe.amount, unit.currency)}, with catch-up amortization.`
         : `Provision and ARO asset ${currency(probe.amount, unit.currency)}.`;
     apply('Post new obligation', 'write',
-      `Posted ${input.ref} in ${probe.periodCode}. ${how}`,
+      `Posted ${input.ref} in ${probe.periodCode}${probe.batchNumber ? ` as ${probe.batchNumber}` : ''}. ${how}`,
       (s) => { postNewAro(s, unit.tenantId, unit.id, input); });
   };
 
@@ -629,8 +629,8 @@ export function RevisionForm({
       probe.amount === 0
         ? `Recorded a ${kind} revision on ${picked.ref} in ${probe.periodCode}. The provision did not move.`
         : picked.inProductiveUse === false
-          ? `Posted a ${kind} revision on ${picked.ref} in ${probe.periodCode} for ${currency(probe.amount, unit.currency)}. The offset goes to operating expense because the ARO asset is flagged not in productive use.`
-          : `Posted a ${kind} revision on ${picked.ref} in ${probe.periodCode} for ${currency(probe.amount, unit.currency)}. The ARO asset moves with the provision.`,
+          ? `Posted a ${kind} revision on ${picked.ref} in ${probe.periodCode} for ${currency(probe.amount, unit.currency)}${probe.batchNumber ? ` as ${probe.batchNumber}` : ''}. The offset goes to operating expense because the ARO asset is flagged not in productive use.`
+          : `Posted a ${kind} revision on ${picked.ref} in ${probe.periodCode} for ${currency(probe.amount, unit.currency)}${probe.batchNumber ? ` as ${probe.batchNumber}` : ''}. The ARO asset moves with the provision.`,
       (s) => { postRevision(s, unit.tenantId, unit.id, picked.id, rev, ui.userName); });
     setAmount('');
     setTo('');
@@ -644,8 +644,8 @@ export function RevisionForm({
       <div className="kicker" style={{ marginBottom: 8 }}>{kind === 'cost' ? 'Cost adjustment' : 'Term adjustment'}</div>
       <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
         {kind === 'cost'
-          ? 'Posts into the open period when you record it — before month-end accretion. Added to direct cost, so contingency then applies to the revised figure. A reduction is a negative amount. History below shows the recorded amount and the provision that posted; open a row for the formulas.'
-          : 'Posts into the open period when you record it — before month-end accretion. Once set, this holds the expected settlement date; the register will refuse a direct edit to it.'}
+          ? 'Posts into the open period when you record it, with a draft journal — before month-end accretion. Added to direct cost, so contingency then applies to the revised figure. A reduction is a negative amount. History below shows the recorded amount and the provision that posted; open a row for the formulas.'
+          : 'Posts into the open period when you record it, with a draft journal — before month-end accretion. Once set, this holds the expected settlement date; the register will refuse a direct edit to it.'}
         {picked?.inProductiveUse === false ? ' This ARO asset is flagged not in productive use, so the offset goes to operating expense.' : ''}
       </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -825,7 +825,7 @@ export function SettlementForm({
               return;
             }
             apply('Record settlement', 'write',
-              `Recorded a ${input.relatedAssetSold ? 'sale' : input.pct >= 1 ? 'full' : 'partial'} settlement of ${target.ref} in ${probe.periodCode} (${probe.caseId}).`,
+              `Recorded a ${input.relatedAssetSold ? 'sale' : input.pct >= 1 ? 'full' : 'partial'} settlement of ${target.ref} in ${probe.periodCode} (${probe.caseId})${probe.batchNumber ? ` as ${probe.batchNumber}` : ''}.`,
               (s) => { postSettlement(s, unit.tenantId, unit.id, input); });
           }}>Record settlement</button>
       </div>

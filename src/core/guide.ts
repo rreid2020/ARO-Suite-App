@@ -338,7 +338,7 @@ const FIRM: Guide = {
     },
     {
       title: 'Journal batches',
-      body: 'Package the open period’s ledger after month-end has been allocated. Approving is not posting. A posted batch is immutable.',
+      body: 'In-year postings create a draft journal when you record them. Package leftover month-end accretion and amortization here. Approving is not posting. A posted batch is immutable.',
       screen: 'batches',
     },
     {

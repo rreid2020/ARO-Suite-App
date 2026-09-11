@@ -1,10 +1,11 @@
 /**
  * In-year transactions the user records during an open period.
  *
- * New ARO, cost adjustments and term adjustments each post when the user
- * creates them. Accretion is a separate month-end run — see periodClose —
- * after those postings have been processed. Opening the month and assigning
- * a curve is not a posting trigger.
+ * New ARO, cost adjustments, term adjustments, settlements and retirements
+ * each post when the user records them, and each writes its own draft journal
+ * batch. Accretion is a separate month-end run — see periodClose — after
+ * those postings have been processed. Opening the month and assigning a
+ * curve is not a posting trigger.
  */
 
 import { isValidDate } from '../engine/dates';
@@ -14,7 +15,7 @@ import type { ObligationEvent } from '../engine/rollforward';
 import { measureObligation } from './measure';
 import { remainingUl, suggestedAroAssetNumber } from './openingLoad';
 import { applyLinkedObligationScope, syncTcaScopeFromObligations, tcaForObligation } from './tcaListing';
-import { assetBooks, openPeriod, provisionCarried } from './periodClose';
+import { assetBooks, createBatchForEvents, openPeriod, provisionCarried } from './periodClose';
 import { newObligationUlIssue, proposeUlAlignment, resolveNewAroUl, ulAlignmentOf, ulAlignmentPending, usefulLifeAsAt, yearsToSettlement } from './usefulLife';
 import type { Period } from './periods';
 import type { AppState, ReportingUnit, UnitData } from './types';
@@ -87,6 +88,8 @@ export interface PostedTransaction {
   amount: number;
   periodCode: string;
   caseId?: string;
+  /** Draft journal created for this transaction, when events could be mapped. */
+  batchNumber?: string;
 }
 
 function emitPlanned(
@@ -113,6 +116,19 @@ function emitPlanned(
     out.push(event);
   });
   return out;
+}
+
+function withJournal(
+  s: AppState,
+  tenantId: string,
+  unitId: string,
+  result: PostedTransaction,
+  events: ObligationEvent[],
+): PostedTransaction {
+  if (!events.length) return result;
+  const packaged = createBatchForEvents(s, tenantId, unitId, events);
+  if (typeof packaged === 'string') return result;
+  return { ...result, batchNumber: packaged.number };
 }
 
 function asYears(v: unknown): number | null {
@@ -272,13 +288,13 @@ export function postNewAro(
     applyLinkedObligationScope(data.obligations, data.tcaAssets);
   }
   const events = emitPlanned(data, unitId, id, period, input.aroseOn, planned, `${unitId}-add-${id}`);
-  return {
+  return withJournal(s, tenantId, unitId, {
     obligationId: id,
     eventId: events[0]?.id ?? null,
     amount,
     periodCode: period.code,
     caseId: posted.id,
-  };
+  }, events);
 }
 
 export function postRevision(
@@ -344,13 +360,13 @@ export function postRevision(
       : p
   ));
   const events = emitPlanned(data, unitId, obligationId, period, rev.date, planned, `${unitId}-rev-${rev.id}`);
-  return {
+  return withJournal(s, tenantId, unitId, {
     obligationId,
     eventId: events[0]?.id ?? null,
     amount,
     periodCode: period.code,
     caseId: posted.id,
-  };
+  }, events);
 }
 
 export function postSettlement(
@@ -431,11 +447,11 @@ export function postSettlement(
   const provisionMove = planned
     .filter((p) => p.eventType === 'revision' || p.eventType === 'settlement' || p.eventType === 'disposal')
     .reduce((n, p) => n + p.amount, 0);
-  return {
+  return withJournal(s, tenantId, unitId, {
     obligationId: o.id,
     eventId: events[0]?.id ?? null,
     amount: round2(provisionMove),
     periodCode: period.code,
     caseId: posted.id,
-  };
+  }, events);
 }

@@ -84,7 +84,7 @@ export function Calendar() {
 
   return (
     <Block kicker="Close calendar" title={`${open.code} — ${TASKS.length} tasks`}
-      note="Working-day offsets are relative to the period end. A negative offset is before it. New ARO, cost and term adjustments, and settlements post on Transactions. Run accretion and amortization from Month-end posting — or the Run buttons on CL-05 and CL-06 — after those postings, then create the journal batch. Ticking a row does not allocate."
+      note="Working-day offsets are relative to the period end. A negative offset is before it. New ARO, cost and term adjustments, settlements and retirements each create a journal when you record them. Run accretion and amortization from Month-end posting — or the Run buttons on CL-05 and CL-06 — after those postings, then create a journal batch for those remaining events. Ticking a row does not allocate."
       actions={<button className="btn btn-primary btn-sm" onClick={() => setUi({ screen: 'month-end', tab: '', sub: '' })}>Open month-end posting</button>}>
       <SheetTable
         rows={TASKS.map(([ref, label, wd, owner]) => ({ ref, label, wd, owner }))}
@@ -144,7 +144,7 @@ export function MonthEnd() {
 
   return (
     <Block kicker="Month-end posting" title={open ? `${open.code} — ${open.starts} to ${open.ends}` : 'No period is open'}
-      note="Opening a period and assigning a curve does not post anything. During the month, new ARO, cost adjustments, term adjustments and settlements post on Transactions. At month end, after those, allocate accretion and amortization here as two separate runs. Then create a journal batch — that packages the ledger; it does not invent these runs.">
+      note="Opening a period and assigning a curve does not post anything. During the month, new ARO, cost and term adjustments, settlements and retirements each create a draft journal when you record them. At month end, allocate accretion and amortization here as two separate runs, then create a journal batch for those remaining events.">
       {!open ? (
         <Empty>Open a period on Periods & close first. Month-end posting writes into the Open period only.</Empty>
       ) : (
@@ -184,7 +184,7 @@ export function MonthEnd() {
           </div>
           <div style={{ marginTop: 16 }}>
             <button className="btn btn-secondary" onClick={() => setUi({ screen: 'batches', tab: '', sub: '' })}>
-              Then create a journal batch
+              Create a journal batch for remaining month-end entries
             </button>
           </div>
         </>
@@ -489,7 +489,7 @@ export function Batches() {
           { label: 'Posted by', value: selected.postedBy ?? '—' },
         ]} />
         {selected.lines.length === 0 ? (
-          <Empty>This batch has no lines. Allocate accretion and amortization on Month-end posting, then create or fill the batch from the ledger.</Empty>
+          <Empty>This batch has no lines. Allocate accretion and amortization on Month-end posting, then create or fill a batch from the remaining ledger events.</Empty>
         ) : drill ? (
           <SheetTable
             rows={detailRows}
@@ -552,7 +552,7 @@ export function Batches() {
         </>
       )}>
       {data.batches.length === 0 ? (
-        <Empty>No batches yet. Record in-period postings, allocate accretion and amortization on Month-end posting, then create a batch from those events.</Empty>
+        <Empty>No batches yet. In-year postings create a draft journal when you record them. Allocate accretion and amortization on Month-end posting, then create a batch for those remaining events.</Empty>
       ) : (
         <SheetTable
           rows={data.batches.map((b) => ({

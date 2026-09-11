@@ -4,7 +4,9 @@ import { addReportingUnit, updateReportingUnit } from '../createUnit';
 import { postNewAro, postRevision, postSettlement, requireOpenPeriod } from '../inYear';
 import { measureObligation } from '../measure';
 import { loadOpeningRegister, openingArcTotal, parseOpeningRegister } from '../openingLoad';
-import { assetBooks } from '../periodClose';
+import { assetBooks, createOrFillPeriodBatch } from '../periodClose';
+import { journalBatchForEvent } from '../registerBooks';
+import { ENGINE_POSTING_RULES } from '../../seed';
 import type { Account, PostingRule, TenantSettings } from '../types';
 import type { Curve } from '../../engine/curve';
 
@@ -12,11 +14,7 @@ function settings(): TenantSettings {
   return {
     accounts: [],
     segments: [],
-    postingRules: [
-      ['addition', 'Retirement cost asset', 'ARO provision'],
-      ['revision', 'Retirement cost asset', 'ARO provision'],
-      ['revision-unproductive', 'Operating costs', 'ARO provision'],
-    ].map(([eventType, debitRole, creditRole], i) => ({
+    postingRules: ENGINE_POSTING_RULES.map(([eventType, debitRole, creditRole], i) => ({
       id: `pr-${i}`, tenantId: 't1', eventType, debitRole, creditRole, engineEmitted: true,
     } as PostingRule)),
     postingScenarios: [],
@@ -50,6 +48,13 @@ function ready(open = true) {
     accounts: [
       acc('p', '21500', 'ARO provision'),
       acc('a', '16100', 'Retirement cost asset'),
+      acc('ad', '16190', 'Accumulated depreciation'),
+      acc('ae', '74200', 'Accretion expense'),
+      acc('de', '74100', 'Depreciation expense'),
+      acc('oc', '74000', 'Operating costs'),
+      acc('c', '11100', 'Cash'),
+      acc('g', '49000', 'Gain on disposal'),
+      acc('s', '99999', 'Suspense'),
     ],
   };
   state.curves['t1'] = [curve()];
@@ -103,6 +108,22 @@ describe('post new ARO', () => {
     const books = assetBooks(data.events, data.periods, created, data.periods[0]);
     expect(books.nbv).toBe(posted.amount);
     expect(books.additions).toBe(posted.amount);
+  });
+
+  it('writes a draft journal for the new ARO when it is recorded', () => {
+    const { state, id, data } = ready();
+    const posted = postNewAro(state, 't1', id, {
+      ref: 'ARO-JV', description: 'Immediate JV', estimatedCost: 400_000,
+      costEstimateDate: '2026-04-01', settlementDate: '2041-04-01', aroseOn: '2026-04-12',
+      assetAcquisitionDate: '2026-04-01',
+      totalUl: 15,
+    });
+    expect(typeof posted).not.toBe('string');
+    if (typeof posted === 'string') throw new Error(posted);
+    expect(posted.batchNumber).toMatch(/^JB-/);
+    expect(data.batches).toHaveLength(1);
+    expect(journalBatchForEvent(posted.eventId!, data.batches)?.number).toBe(posted.batchNumber);
+    expect(createOrFillPeriodBatch(state, 't1', id)).toMatch(/already covers/);
   });
 
   it('measures a new ARO as at the open period end, not this year end', () => {
@@ -341,6 +362,27 @@ describe('post cost and term adjustments', () => {
     expect(data.obligations[0].adj).toHaveLength(1);
   });
 
+  it('writes a separate draft journal for a cost adjustment, not mixed with an earlier new ARO', () => {
+    const { state, id, data } = ready();
+    const created = postNewAro(state, 't1', id, {
+      ref: 'ARO-JV-REV', description: 'Has remaining term', estimatedCost: 400_000,
+      costEstimateDate: '2026-04-01', settlementDate: '2041-04-01', aroseOn: '2026-04-12',
+      assetAcquisitionDate: '2026-04-01',
+      totalUl: 15,
+    });
+    expect(typeof created).not.toBe('string');
+    if (typeof created === 'string') throw new Error(created);
+    const posted = postRevision(state, 't1', id, created.obligationId, {
+      id: 'rev-jv', kind: 'cost', amount: 50_000, date: '2026-04-20', reason: 'Scope change',
+    });
+    expect(typeof posted).not.toBe('string');
+    if (typeof posted === 'string') throw new Error(posted);
+    expect(posted.batchNumber).toMatch(/^JB-/);
+    expect(posted.batchNumber).not.toBe(created.batchNumber);
+    expect(data.batches).toHaveLength(2);
+    expect(journalBatchForEvent(posted.eventId!, data.batches)?.number).toBe(posted.batchNumber);
+  });
+
   it('measures a cost adjustment as at the open period end, not this year end', () => {
     const { state, id, data } = ready();
     const created = postNewAro(state, 't1', id, {
@@ -419,6 +461,8 @@ describe('post settlement', () => {
     expect(data.events.some((e) => e.type === 'settlement' && e.obligationId === o.id && e.amount < 0)).toBe(true);
     expect(data.settlements).toHaveLength(1);
     expect(data.settlements[0].posted).toBe(true);
+    expect(posted.batchNumber).toMatch(/^JB-/);
+    expect(journalBatchForEvent(posted.eventId!, data.batches)?.number).toBe(posted.batchNumber);
   });
 
   it('extinguishes the provision on sale of the related asset', () => {
@@ -436,5 +480,8 @@ describe('post settlement', () => {
     expect(posted.caseId).toBe('sale');
     expect(data.events.some((e) => e.type === 'disposal' && e.obligationId === o.id)).toBe(true);
     expect(data.events.some((e) => e.type === 'settlement' && e.obligationId === o.id)).toBe(false);
+    expect(posted.batchNumber).toMatch(/^JB-/);
+    const batch = data.batches.find((b) => b.number === posted.batchNumber);
+    expect(batch?.lines.some((l) => data.events.find((e) => e.id === l.eventId)?.type === 'disposal')).toBe(true);
   });
 });

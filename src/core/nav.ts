@@ -79,7 +79,7 @@ export const STEPS: StepDef[] = [
   { id: 'journals', label: 'Journals', phase: 'Close', domain: 'journals',
     purpose: 'The entries the engine emits from the event ledger, and where each one posts.' },
   { id: 'batches', label: 'Journal batches', phase: 'Close', domain: 'journals',
-    purpose: 'Package the open period\'s ledger into a batch after month-end accretion and amortization have been allocated. Open a batch to inspect the journal entry by GL account, then drill into obligation lines. A preparer approves; a reviewer or partner posts. Approving is not posting. A posted batch is immutable.' },
+    purpose: 'In-year postings create a draft journal when you record them. This step also packages leftover month-end accretion and amortization. Open a batch to inspect the journal entry by GL account, then drill into obligation lines. A preparer approves; a reviewer or partner posts. Approving is not posting. A posted batch is immutable.' },
   { id: 'recon', label: 'GL reconciliation', phase: 'Close', domain: 'journals',
     purpose: 'The ARO sub-ledger against the provision accounts in the general ledger.' },
 

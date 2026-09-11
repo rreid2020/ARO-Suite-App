@@ -1,12 +1,14 @@
 /**
- * Month-end accretion and amortization, plus packaging the ledger into a
- * journal batch.
+ * Month-end accretion and amortization, plus packaging the ledger into
+ * journal batches.
  *
  * Sequence for an open period:
- *   1. User posts new ARO, cost adjustments and term adjustments as they arise.
+ *   1. User posts new ARO, cost/term adjustments, settlements and retirements
+ *      as they arise. Each of those writes a draft journal batch immediately.
  *   2. At month end, after those postings, the user allocates accretion.
  *   3. Separately, the user allocates amortization of the retirement cost asset.
- *   4. Create batch reads the ledger — it does not invent either run.
+ *   4. Create batch from the ledger packages whatever is still unbatched —
+ *      typically those month-end runs. It does not invent either run.
  *
  * Opening the month and assigning a curve is not a posting trigger.
  *
@@ -411,32 +413,26 @@ export function periodBatchRefusal(s: AppState, tenantId: string, unitId: string
     if (covering) {
       return `${covering.number} already covers ${period.code}. Approve or reverse it before creating another.`;
     }
-    return `Nothing on the ledger for ${period.code}. Post new ARO, cost and term adjustments when you record them, then allocate accretion and amortization at month end, then create the batch.`;
+    return `Nothing unbatched on the ledger for ${period.code}. In-year postings create their own journal when you record them. Allocate accretion and amortization at month end, then create a batch for those remaining events.`;
   }
   return null;
 }
 
-/**
- * Package unbatched in-year events for the Open period into a journal batch.
- * Does not write accretion or amortization — those are separate month-end runs.
- */
-export function createOrFillPeriodBatch(s: AppState, tenantId: string, unitId: string): PeriodBatchResult | string {
-  const blocked = periodBatchRefusal(s, tenantId, unitId);
-  if (blocked) return blocked;
-
-  const data = s.data[unitId];
-  const period = openPeriod(data)!;
-  const toPost = unbatchedPeriodEvents(data, period.id);
-  const draft = data.batches.find((b) => b.periodId === period.id && b.status === 'Draft');
-  const emptyDraft = Boolean(draft && batchDebits(draft) < 0.005);
+function writeBatch(
+  s: AppState,
+  tenantId: string,
+  unitId: string,
+  data: UnitData,
+  period: Period,
+  toPost: ObligationEvent[],
+  existing?: JournalBatch,
+): PeriodBatchResult {
   const lines = linesFromEvents(s, tenantId, data, toPost);
   const amount = round2(toPost.reduce((sum, e) => sum + Math.abs(e.amount), 0));
-
-  if (emptyDraft && draft) {
-    draft.lines = lines;
-    return { number: draft.number, periodCode: period.code, amount, filled: true };
+  if (existing) {
+    existing.lines = lines;
+    return { number: existing.number, periodCode: period.code, amount, filled: true };
   }
-
   const batch: JournalBatch = {
     id: `jb-${Date.now().toString(36)}-${data.batches.length}`,
     unitId,
@@ -447,4 +443,48 @@ export function createOrFillPeriodBatch(s: AppState, tenantId: string, unitId: s
   };
   data.batches.push(batch);
   return { number: batch.number, periodCode: period.code, amount, filled: false };
+}
+
+/**
+ * Package one in-year transaction's events into their own draft journal.
+ * Does not scoop leftover month-end accretion or amortization.
+ */
+export function createBatchForEvents(
+  s: AppState,
+  tenantId: string,
+  unitId: string,
+  events: ObligationEvent[],
+): PeriodBatchResult | string {
+  const unit = (s.units[tenantId] ?? []).find((u) => u.id === unitId);
+  const data = s.data[unitId];
+  if (!unit || !data) return 'That reporting unit is not on this tenant.';
+  const period = openPeriod(data);
+  if (!period) {
+    return 'Open a period before creating a batch. A batch posts the open period; it does not fall back to year-end.';
+  }
+  const covered = coveredEventIds(data.batches);
+  const toPost = events.filter((e) => (
+    e.periodId === period.id && isBatchEvent(e.type) && !covered.has(e.id) && Math.abs(e.amount) >= 0.005
+  ));
+  if (!toPost.length) return 'Nothing to package for that transaction.';
+  const lines = linesFromEvents(s, tenantId, data, toPost);
+  if (!lines.length) return 'Those events could not be mapped to posting accounts.';
+  return writeBatch(s, tenantId, unitId, data, period, toPost);
+}
+
+/**
+ * Package unbatched events for the Open period into a journal batch.
+ * Typically month-end accretion and amortization still sitting on the ledger.
+ * Does not write those runs — they are allocated separately.
+ */
+export function createOrFillPeriodBatch(s: AppState, tenantId: string, unitId: string): PeriodBatchResult | string {
+  const blocked = periodBatchRefusal(s, tenantId, unitId);
+  if (blocked) return blocked;
+
+  const data = s.data[unitId];
+  const period = openPeriod(data)!;
+  const toPost = unbatchedPeriodEvents(data, period.id);
+  const draft = data.batches.find((b) => b.periodId === period.id && b.status === 'Draft');
+  const emptyDraft = Boolean(draft && batchDebits(draft) < 0.005);
+  return writeBatch(s, tenantId, unitId, data, period, toPost, emptyDraft ? draft : undefined);
 }

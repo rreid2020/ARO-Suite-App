@@ -125,7 +125,7 @@ describe('allocate accretion at month end', () => {
   it('does not write accretion merely because a period is open and a curve is assigned', () => {
     const { state, id, data } = ready();
     expect(data.periods[0].status).toBe('Open');
-    expect(createOrFillPeriodBatch(state, 't1', id)).toMatch(/Nothing on the ledger/);
+    expect(createOrFillPeriodBatch(state, 't1', id)).toMatch(/Nothing unbatched on the ledger/);
     expect(data.events.some((e) => e.type === 'accretion')).toBe(false);
     expect(data.events.some((e) => e.type === 'depreciation')).toBe(false);
   });
@@ -267,7 +267,7 @@ describe('create batch from the ledger', () => {
     expect(data.batches).toHaveLength(1);
   });
 
-  it('can batch a new ARO posting without waiting for accretion', () => {
+  it('packages a new ARO posting onto its own journal without waiting for accretion', () => {
     const { state, id, data } = ready();
     const posted = postNewAro(state, 't1', id, {
       ref: 'ARO-NEW', description: 'New site', estimatedCost: 500_000,
@@ -276,11 +276,29 @@ describe('create batch from the ledger', () => {
       totalUl: 15,
     });
     expect(typeof posted).not.toBe('string');
-    const result = createOrFillPeriodBatch(state, 't1', id);
-    expect(typeof result).not.toBe('string');
-    if (typeof result === 'string') throw new Error(result);
+    if (typeof posted === 'string') throw new Error(posted);
+    expect(posted.batchNumber).toMatch(/^JB-/);
+    expect(data.batches).toHaveLength(1);
     expect(data.batches[0].lines.some((l) => l.accountId === 'a')).toBe(true);
     expect(data.events.some((e) => e.type === 'accretion')).toBe(false);
+    expect(createOrFillPeriodBatch(state, 't1', id)).toMatch(/already covers/);
+  });
+
+  it('batches month-end accretion separately after in-year journals already exist', () => {
+    const { state, id, data } = ready();
+    postRevision(state, 't1', id, data.obligations[0].id, {
+      id: 'rev-1', kind: 'cost', amount: 100_000, date: '2026-04-15', reason: 'Scope change',
+    });
+    expect(data.batches).toHaveLength(1);
+    const inYearNumber = data.batches[0].number;
+    allocateMonthEnd(state, 't1', id, 'accretion');
+    const leftover = createOrFillPeriodBatch(state, 't1', id);
+    expect(typeof leftover).not.toBe('string');
+    if (typeof leftover === 'string') throw new Error(leftover);
+    expect(data.batches).toHaveLength(2);
+    expect(leftover.number).not.toBe(inYearNumber);
+    expect(data.batches[1].lines.some((l) => data.events.find((e) => e.id === l.eventId)?.type === 'accretion')).toBe(true);
+    expect(data.batches[0].lines.every((l) => data.events.find((e) => e.id === l.eventId)?.type !== 'accretion')).toBe(true);
   });
 });
 
