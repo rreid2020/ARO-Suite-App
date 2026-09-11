@@ -81,14 +81,15 @@ export function Rollf() {
           : 'Lock opening balances on Opening register after reconciling to the trial balance. Until then, opening on this statement is the converted provision loaded so far (or nil if none).'}
         actions={<button className="btn btn-secondary btn-sm" onClick={exportRf}>Export to Excel</button>}>
         <SheetTable
+          tableClassName="table-head-wrap"
           rows={activity.lines}
           rowKey={(l) => l.key}
           noun="lines"
           rowClassName={(l) => groupToneClass(l.group)}
           columns={[
-            { key: 'line', header: 'Line', value: (l) => l.label, tdStyle: { fontFamily: 'var(--font-heading)' }, cell: (l) => l.label },
-            { key: 'group', header: 'Group', value: (l) => l.group, tdClassName: 'g-label', cell: (l) => l.group },
-            { key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num', value: (l) => l.amount, cell: (l) => currency(l.amount, unit.currency) },
+            { key: 'line', header: 'Line', value: (l) => l.label, thStyle: { textAlign: 'center' }, tdStyle: { fontFamily: 'var(--font-heading)' }, cell: (l) => l.label },
+            { key: 'group', header: 'Group', value: (l) => l.group, thStyle: { textAlign: 'center' }, tdClassName: 'g-label', cell: (l) => l.group },
+            { key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num', thStyle: { textAlign: 'center' }, value: (l) => l.amount, cell: (l) => currency(l.amount, unit.currency) },
           ]}
         />
       </Block>
@@ -96,6 +97,7 @@ export function Rollf() {
       <Block kicker="In-year activity" title="Opening to closing, per period and for the year"
         note="The same lines as the consolidated table, one column each. Year totals are that table for the provision movements. Opening sits in the period that holds the conversion events; later periods show the movements posted in that period. Future value is measured as at each period end; the year figure is as at year end, not the sum of the periods.">
         <SheetTable
+          tableClassName="table-fit"
           rows={periodRows}
           rowKey={(p) => p.periodId}
           noun="periods"
@@ -115,14 +117,16 @@ export function Rollf() {
             </tr>
           }
           columns={[
-            { key: 'period', header: 'Period', value: (p) => p.code, cell: (p) => p.code, thClassName: groupToneClass('lead'), tdClassName: groupToneClass('lead') },
+            { key: 'period', header: 'Period', value: (p) => p.code, cell: (p) => p.code, thClassName: groupToneClass('lead'), tdClassName: groupToneClass('lead'), width: '7%' },
             ...ACTIVITY_TABLE_COLUMNS.map((c) => ({
               key: c.key,
               header: c.label,
               kind: 'number' as const,
               group: c.group,
+              width: c.key === 'massUpdate' ? '10%' : '7.75%',
               thClassName: 'num',
               tdClassName: c.key === 'closing' || c.key === 'futureValue' ? 'num derived' : 'num',
+              thStyle: { textAlign: 'center' as const },
               value: (p: (typeof periodRows)[number]) => p[c.key],
               cell: (p: (typeof periodRows)[number]) => currency(p[c.key], unit.currency),
             })),

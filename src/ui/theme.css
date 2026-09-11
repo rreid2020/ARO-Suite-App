@@ -354,6 +354,67 @@ a:hover { color: var(--color-accent-700); }
 }
 .table.register-grid .sheet-filter-btn { margin: 0 auto; }
 
+/* Roll-forward: wrap and centre headings. table-fit also shares the viewport width. */
+.table-head-wrap th,
+.table-fit th {
+  text-align: center;
+  white-space: normal;
+  vertical-align: bottom;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+  padding: 6px 3px;
+}
+.table-head-wrap .grp th,
+.table-fit .grp th {
+  text-align: center;
+  white-space: normal;
+  letter-spacing: 0.1em;
+  overflow: hidden;
+}
+.table-head-wrap .sheet-th-inner,
+.table-fit .sheet-th-inner {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+}
+.table-head-wrap .sheet-th-label,
+.table-fit .sheet-th-label,
+.scroll-x .table-head-wrap .sheet-th-label,
+.scroll-x .table-fit .sheet-th-label {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: unset;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.2;
+}
+.table-head-wrap .sheet-filter-btn,
+.table-fit .sheet-filter-btn { margin: 0 auto; }
+.scroll-x:has(.table-fit) { overflow-x: auto; }
+.scroll-x:has(.table-fit) .table-fit {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+.table-fit td {
+  padding: 5px 3px;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-fit td.num { padding-left: 2px; padding-right: 4px; }
+
 .table tbody tr.is-expanded {
   background: color-mix(in srgb, var(--color-accent) 8%, transparent);
 }

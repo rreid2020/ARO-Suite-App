@@ -282,7 +282,7 @@ export function SheetStatus<T>({ sheet, noun = 'rows' }: { sheet: SheetHandle<T>
 }
 
 export function SheetTable<T>({
-  rows, rowKey, columns, empty, leading, groupHeader, footer, tableRef, defaultSort, noun, rowClassName, expand,
+  rows, rowKey, columns, empty, leading, groupHeader, footer, tableRef, defaultSort, noun, rowClassName, expand, tableClassName,
 }: {
   rows: T[];
   rowKey: (row: T) => string;
@@ -296,6 +296,7 @@ export function SheetTable<T>({
   noun?: string;
   rowClassName?: (row: T) => string | undefined;
   expand?: (row: T) => React.ReactNode;
+  tableClassName?: string;
 }) {
   const specs = useMemo(() => columns.map((c) => ({ key: c.key, kind: c.kind, value: c.value })), [columns]);
   const sheet = useSheet(rows, specs, defaultSort);
@@ -316,7 +317,7 @@ export function SheetTable<T>({
   return (
     <>
       <div className="scroll-x">
-        <table className="table" ref={tableRef}>
+        <table className={['table', tableClassName].filter(Boolean).join(' ')} ref={tableRef}>
           <thead>
             {groupHeader ?? autoGroupHeader}
             <tr>
