@@ -230,7 +230,7 @@ const FIRM: Guide = {
     },
     {
       title: 'Measure',
-      body: 'Open a register row to post a cost or term adjustment or a settlement, and to open calculation-details lines for the events in each total. Transactions on the row also lists that history with the posting JV#. Transactions is the same posting, for the whole open period. The ARO register is the as-at books.',
+      body: 'Open a register row to post a cost or term adjustment or a settlement, and to open calculation-details lines for the events in each total. Transactions on the row also lists that history with the posting JV#. Open a cost-adjustment row to see how the recorded amount became the posted provision. Transactions is the same posting, for the whole open period. The ARO register is the as-at books.',
     },
     {
       title: 'Close',
@@ -262,7 +262,7 @@ const FIRM: Guide = {
       id: 'register',
       title: '3. Post on the register or on Transactions',
       body: [
-        'Open an ARO register row for the monthly schedules and calculation details. Beside Obligation and ARO asset are Transactions tabs: cost adjustment, term adjustment and settlement. Each tab posts into the open period and lists that obligation’s history with the posting JV#. Open a calculation-details line to see the events that make up that total.',
+        'Open an ARO register row for the monthly schedules and calculation details. Beside Obligation and ARO asset are Transactions tabs: cost adjustment, term adjustment and settlement. Each tab posts into the open period and lists that obligation’s history with the posting JV#. Open a cost-adjustment history row to see the formulas from the recorded amount to the posted provision. Open a calculation-details line to see the events that make up that total.',
         'A new obligation can be posted from the register or from the Transactions step, which also lists every posting in the open period.',
       ],
     },
@@ -328,7 +328,7 @@ const FIRM: Guide = {
     },
     {
       title: 'ARO register',
-      body: 'Opening, in-year postings through the selected period, and closing. Open a row for schedules, calculation details, and to post a cost or term adjustment or a settlement. Transactions on the row lists that history with the posting JV#. Open a calculation-details line to see the events in that total.',
+      body: 'Opening, in-year postings through the selected period, and closing. Open a row for schedules, calculation details, and to post a cost or term adjustment or a settlement. Transactions on the row lists that history with the posting JV#. Open a cost-adjustment history row for the formulas from recorded amount to posted provision. Open a calculation-details line to see the events in that total.',
       screen: 'register',
     },
     {

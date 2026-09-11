@@ -61,7 +61,9 @@ export type EstimateKind = 'cost' | 'term' | 'writeOff' | 'mass';
 
 export function matchedRevision(o: Obligation, e: ObligationEvent) {
   const adjs = o.adj ?? [];
-  return adjs.find((a) => e.id.endsWith(`-rev-${a.id}`) || e.id.endsWith(`-${a.id}`))
+  return adjs.find((a) =>
+    e.id.includes(`-rev-${a.id}`) || e.id.endsWith(`-${a.id}`) || e.id.includes(`-${a.id}-`)
+  )
     ?? adjs.find((a) => a.date === e.date && (
       (a.kind === 'term' && /term/i.test(e.note ?? ''))
       || (a.kind === 'cost' && /cost/i.test(e.note ?? ''))

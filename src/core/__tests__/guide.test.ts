@@ -70,6 +70,7 @@ describe('How to use it', () => {
     expect(section?.title).toMatch(/register or on Transactions/i);
     expect(section?.body.join(' ')).toMatch(/Transactions tabs/i);
     expect(section?.body.join(' ')).toMatch(/posting JV#/i);
+    expect(section?.body.join(' ')).toMatch(/recorded amount/i);
     expect(section?.body.join(' ')).toMatch(/calculation-details line/i);
     const registerStep = walkthroughFor('Reporting entity').find((s) => s.screen === 'register');
     expect(registerStep?.body).toMatch(/calculation-details line/i);

@@ -23,13 +23,15 @@ import {
 import { isValidDate, maskDateInput, priorYearEnd } from '../../engine/dates';
 import { planCaseEntries, selectPostingCase, type PostingFacts } from '../../engine/postingCases';
 import { matchedRevision, txHistoryEvents, type TxHistoryKind } from '../../core/activity';
+import { revisionWalkForEvent, type RevisionWalk } from '../../core/postingWalk';
 import { journalBatchForEvent } from '../../core/registerBooks';
 import { Obligation, Revision } from '../../core/types';
 import { REMEASUREMENT_REASONS } from '../../seed';
+import type { Rung } from '../../engine/ladder';
 import {
-  Block, Empty, Field, JournalRef, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields,
+  Basis, Block, Empty, Field, JournalRef, NewAroEstimate, NewAroLifeFields, NewAroSettlementFields,
   DEFAULT_ESTIMATE_COLUMNS, currency, emptyEstimateLine, estimateHasCost, estimatePayload,
-  parseNumber, pct, SheetTable, Stats, Tag,
+  parseNumber, pct, SheetTable, Stats, Tag, years,
 } from '../components';
 import type { EstimateLineDraft, EstimateMode } from '../components';
 
@@ -361,19 +363,28 @@ export function TxEventHistory({
   obligation: Obligation;
   kind: TxHistoryKind;
 }) {
+  const { state } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const events = useMemo(
     () => txHistoryEvents(obligation, data.events, kind),
     [obligation, data.events, kind],
   );
+  const [openId, setOpenId] = useState<string | null>(null);
   const periodOf = (id: string) => data.periods.find((p) => p.id === id)?.code ?? id;
   const noun = kind === 'settle' ? 'settlements' : kind === 'cost' ? 'cost adjustments' : 'term adjustments';
   const title = kind === 'settle' ? 'Settlement history' : kind === 'cost' ? 'Cost adjustment history' : 'Term adjustment history';
+  const showWalk = kind === 'cost' || kind === 'term';
+  const recordedTotal = events.reduce((s, e) => s + (matchedRevision(obligation, e)?.amount ?? 0), 0);
 
   return (
     <div style={{ marginTop: 18 }}>
       <div className="kicker" style={{ marginBottom: 8 }}>{title}</div>
+      {kind === 'cost' && events.length > 0 && (
+        <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.5 }}>
+          Recorded is the amount entered, gross of contingency. Provision is that amount after contingency, inflation to settlement, and discounting to the year end. Open a row for the step-by-step formulas.
+        </p>
+      )}
       {events.length === 0 ? (
         <Empty>No {noun} posted on this obligation yet.</Empty>
       ) : (
@@ -381,11 +392,37 @@ export function TxEventHistory({
           rows={events}
           rowKey={(e) => e.id}
           noun={noun}
+          leading={showWalk ? {
+            width: 56,
+            header: '',
+            cell: (e) => (
+              <button type="button" className="btn btn-ghost btn-sm"
+                aria-expanded={openId === e.id}
+                aria-label={`${openId === e.id ? 'Hide' : 'Show'} how ${e.id} posted`}
+                onClick={() => setOpenId(openId === e.id ? null : e.id)}>
+                {openId === e.id ? 'Close' : 'Open'}
+              </button>
+            ),
+          } : undefined}
+          expand={showWalk ? (e) => {
+            if (openId !== e.id) return false;
+            const walk = revisionWalkForEvent(state, unit, obligation, e);
+            if (!walk) {
+              return <Empty>This posting is not tied to a recorded cost or term adjustment, so there is no chain to show.</Empty>;
+            }
+            return <WalkPanel walk={walk} posted={e.amount} currencyCode={unit.currency} />;
+          } : undefined}
           footer={
             <tr>
+              {showWalk ? <td /> : null}
               <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Total</td>
               <td />
               <td />
+              {kind === 'cost' ? (
+                <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>
+                  {currency(recordedTotal, unit.currency)}
+                </td>
+              ) : kind === 'term' ? <td /> : null}
               <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>
                 {currency(events.reduce((s, e) => s + e.amount, 0), unit.currency)}
               </td>
@@ -398,8 +435,20 @@ export function TxEventHistory({
             { key: 'date', header: 'Date', kind: 'date', value: (e) => e.date, cell: (e) => e.date },
             { key: 'period', header: 'Period', value: (e) => periodOf(e.periodId), cell: (e) => periodOf(e.periodId) },
             { key: 'type', header: 'Type', value: (e) => e.type, cell: (e) => <Tag kind="neutral">{e.type}</Tag> },
+            ...(kind === 'cost' ? [{
+              key: 'recorded', header: 'Recorded', kind: 'number' as const, thClassName: 'num', tdClassName: 'num',
+              value: (e: (typeof events)[number]) => matchedRevision(obligation, e)?.amount ?? '',
+              cell: (e: (typeof events)[number]) => {
+                const amount = matchedRevision(obligation, e)?.amount;
+                return amount == null ? <span className="muted">—</span> : currency(amount, unit.currency);
+              },
+            }] : kind === 'term' ? [{
+              key: 'to', header: 'New settlement', kind: 'date' as const,
+              value: (e: (typeof events)[number]) => matchedRevision(obligation, e)?.to ?? '',
+              cell: (e: (typeof events)[number]) => matchedRevision(obligation, e)?.to || <span className="muted">—</span>,
+            }] : []),
             {
-              key: 'amount', header: 'Amount', kind: 'number', thClassName: 'num', tdClassName: 'num',
+              key: 'amount', header: 'Provision', kind: 'number', thClassName: 'num', tdClassName: 'num',
               value: (e) => e.amount, cell: (e) => currency(e.amount, unit.currency),
             },
             {
@@ -429,6 +478,112 @@ export function TxEventHistory({
     </div>
   );
 }
+
+function rungValue(rung: Rung, currencyCode: string): string {
+  if (rung.kind === 'money') return currency(rung.value, currencyCode);
+  if (rung.kind === 'rate') return pct(rung.value, 4);
+  return years(rung.value);
+}
+
+function LadderTable({ rungs, currencyCode }: { rungs: Rung[]; currencyCode: string }) {
+  return (
+    <div className="scroll-x">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Step</th>
+            <th>How</th>
+            <th>Formula</th>
+            <th className="num">Value</th>
+            <th>Basis</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rungs.map((rung) => (
+            <tr key={rung.key}>
+              <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>{rung.label}</td>
+              <td style={{ maxWidth: 320, fontSize: 12.5 }}>{rung.operator}</td>
+              <td style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11, wordBreak: 'break-all' }}>{rung.formula}</td>
+              <td className="num">{rungValue(rung, currencyCode)}</td>
+              <td>{rung.basis ? <Basis tag={rung.basis} /> : null}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function WalkPanel({ walk, posted, currencyCode }: { walk: RevisionWalk; posted: number; currencyCode: string }) {
+  const mismatch = Math.abs(round2(walk.posted) - round2(posted)) > 0.02;
+  return (
+    <div style={{ padding: '8px 0 4px' }}>
+      <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.5 }}>
+        {walk.kind === 'cost'
+          ? 'The recorded amount is gross of contingency. Contingency applies once, then the figure is inflated to settlement and discounted to the year end. That present value is the posted provision.'
+          : 'The posted provision is the change in present value from moving the expected settlement date. The whole obligation is repriced; it is not a scaled cost adjustment.'}
+        {mismatch ? ' The steps use the curve and assumptions in force now. The posted amount is what was recorded.' : ''}
+      </p>
+      {walk.kind === 'cost' && walk.rungs.length > 0 && (
+        <>
+          <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, marginBottom: 10, wordBreak: 'break-all' }}>
+            {walk.formula}
+            <span className="muted"> = {currency(walk.rungs.at(-1)?.value ?? walk.posted, currencyCode)}</span>
+          </div>
+          <LadderTable rungs={walk.rungs} currencyCode={currencyCode} />
+        </>
+      )}
+      {(walk.kind === 'term' || walk.rungs.length === 0) && (
+        <div className="scroll-x">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>Before</th>
+                <th>After</th>
+                <th>Formula</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Settlement</td>
+                <td>{walk.before.settlement}</td>
+                <td>{walk.after.settlement}</td>
+                <td className="muted">Latest timing revision</td>
+              </tr>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Discount term</td>
+                <td>{years(walk.before.tD)}</td>
+                <td>{years(walk.after.tD)}</td>
+                <td style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>Year end → settlement</td>
+              </tr>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Discount rate</td>
+                <td>{pct(walk.before.rate, 4)}</td>
+                <td>{pct(walk.after.rate, 4)}</td>
+                <td className="muted">Looked up on the curve in force</td>
+              </tr>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Provision</td>
+                <td className="num">{currency(walk.before.pv, currencyCode)}</td>
+                <td className="num">{currency(walk.after.pv, currencyCode)}</td>
+                <td style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>{walk.formula}</td>
+              </tr>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Posted provision</td>
+                <td />
+                <td className="num" style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>{currency(posted, currencyCode)}</td>
+                <td style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>= after − before</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function RevisionForm({
   kind, lockObligationId,
@@ -489,7 +644,7 @@ export function RevisionForm({
       <div className="kicker" style={{ marginBottom: 8 }}>{kind === 'cost' ? 'Cost adjustment' : 'Term adjustment'}</div>
       <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5, marginBottom: 12 }}>
         {kind === 'cost'
-          ? 'Posts into the open period when you record it — before month-end accretion. Added to direct cost, so contingency then applies to the revised figure. A reduction is a negative amount.'
+          ? 'Posts into the open period when you record it — before month-end accretion. Added to direct cost, so contingency then applies to the revised figure. A reduction is a negative amount. History below shows the recorded amount and the provision that posted; open a row for the formulas.'
           : 'Posts into the open period when you record it — before month-end accretion. Once set, this holds the expected settlement date; the register will refuse a direct edit to it.'}
         {picked?.inProductiveUse === false ? ' This ARO asset is flagged not in productive use, so the offset goes to operating expense.' : ''}
       </div>
