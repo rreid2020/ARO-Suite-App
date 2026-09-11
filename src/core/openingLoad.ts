@@ -3,8 +3,9 @@
  *
  * A reporting entity converts from a spreadsheet: each row is an obligation,
  * not a match candidate against a register that already exists. The file
- * carries opening provision and ARO-asset balances. The trial balance is
- * totals only — recon is the sum of those rows against the GL totals.
+ * carries estimated cost and ARO-asset balances; opening future value and
+ * opening provision are measured on load. The trial balance is totals only —
+ * recon is the sum of those measured rows against the GL totals.
  *
  * Engine fields are mapped by heading alias. Every other column is kept on
  * the obligation under the organisation's own heading (JSON payload) and
@@ -17,8 +18,9 @@ import { isValidDate } from '../engine/dates';
 import { CENT, type ObligationEvent } from '../engine/rollforward';
 import { canonicalizeObligationClasses, classCodeOf, classNameOf } from './assetClass';
 import { parseNumber } from './format';
+import { measureObligation } from './measure';
 import { applyLinkedObligationScope, assetNumberKey, openingObligations, openingTcaListing, syncTcaScopeFromObligations, tcaReconciled, tcaScopingGaps } from './tcaListing';
-import type { AppState, AroAssetClass, Obligation, TcaAsset, UnitData } from './types';
+import type { AppState, AroAssetClass, Obligation, ReportingUnit, TcaAsset, UnitData } from './types';
 import { parseUlYears } from './usefulLife';
 
 export interface ParsedOpeningRow {
@@ -99,12 +101,8 @@ function parseMoney(raw: string): number | null {
 /** Columns every opening-balances file must have. Aliases still match on load. */
 const REQUIRED_OPENING_COLUMNS: { key: string; heading: string; aliases: string; fix: string }[] = [
   {
-    key: 'ref', heading: 'Obligation Number', aliases: 'Reference, Ref, Obligation reference, ARO ref',
-    fix: 'Put that heading on the first row. Export the template for the accepted headings.',
-  },
-  {
-    key: 'openingProvision', heading: 'Opening provision', aliases: 'Provision, PV, Opening balance',
-    fix: 'Add that heading and fill each row with the converted liability as a number (0 is allowed).',
+    key: 'estimatedCost', heading: 'Estimated cost', aliases: 'Direct cost, Cost, Current cost',
+    fix: 'Add that heading and fill each row with the current-price cost as a number (0 is allowed). Opening future value and opening provision are calculated on load.',
   },
   {
     key: 'openingArc', heading: 'ARO asset', aliases: 'NBV, ARC, Retirement cost asset',
@@ -194,7 +192,7 @@ function classifyHeader(cells: string[]): { map: Record<string, number>; extras:
 
 function looksLikeHeader(cells: string[]): boolean {
   const hit = classifyHeader(cells).map;
-  return hit.ref != null || hit.openingProvision != null || hit.description != null;
+  return hit.ref != null || hit.estimatedCost != null || hit.description != null || hit.openingArc != null;
 }
 
 export function extraColumnKey(name: string): string {
@@ -263,10 +261,10 @@ export function parseOpeningRegister(text: string): OpeningParseResult {
   const delim = detectDelim(lines[0]);
   const first = splitLine(lines[0], delim);
   const classified = classifyHeader(first);
-  if (!looksLikeHeader(first) || classified.map.ref == null) {
+  if (!looksLikeHeader(first) || classified.map.estimatedCost == null) {
     return {
       rows: [],
-      problems: ['The first row must be column headings, including Obligation Number. Export the template, keep those headings on the Obligation & ARO Asset Listing sheet, save as CSV, and load that file.'],
+      problems: ['The first row must be column headings, including Estimated cost. Export the template, keep those headings on the Obligation & ARO Asset Listing sheet, save as CSV, and load that file.'],
       extraNames: [],
     };
   }
@@ -299,9 +297,7 @@ export function parseOpeningRegister(text: string): OpeningParseResult {
     const ref = cell('ref');
     const who = ref ? `Line ${line} (${ref})` : `Line ${line}`;
 
-    if (!ref) {
-      problems.push(`${who}: Obligation Number is missing. Every row needs a unique Obligation Number.`);
-    } else {
+    if (ref) {
       const key = ref.toLowerCase();
       if (seen.has(key)) {
         problems.push(`${who}: Obligation Number ${ref} is already used on an earlier row. Each Obligation Number must be unique.`);
@@ -328,8 +324,8 @@ export function parseOpeningRegister(text: string): OpeningParseResult {
       problems.push(`${who}: Asset acquisition date "${assetAcquisitionDate}" is not a date. Use YYYY-MM-DD, for example 2008-06-15.`);
     }
 
-    const estimatedCost = readNumber(cell('estimatedCost'), problems, who, 'Estimated cost');
-    const openingProvision = readNumber(cell('openingProvision'), problems, who, 'Opening provision', { required: true });
+    const estimatedCost = readNumber(cell('estimatedCost'), problems, who, 'Estimated cost', { required: true });
+    const openingProvision = readNumber(cell('openingProvision'), problems, who, 'Opening provision');
     const openingArc = readNumber(cell('openingArc'), problems, who, 'ARO asset', { required: true });
     const openingAccumAmort = readNumber(cell('openingAccumAmort'), problems, who, 'Accumulated amortization', { required: true });
     const openingFv = readNumber(cell('openingFv'), problems, who, 'Opening future value');
@@ -419,6 +415,21 @@ export function remainingUl(o: Obligation): number | null {
   const expired = typeof o.expiredUl === 'number' ? o.expiredUl : null;
   if (total == null) return null;
   return total - (expired ?? 0);
+}
+
+/** Sequential unique identifier. Used for obligation numbers and similar stems. */
+export function uniqueObligationRef(obligations: Obligation[], base: string): string {
+  const used = new Set(obligations.map((o) => o.ref.trim().toLowerCase()));
+  const stem = base.trim() || 'ARO';
+  if (!used.has(stem.toLowerCase())) return stem;
+  let i = 2;
+  while (used.has(`${stem}-${i}`.toLowerCase())) i++;
+  return `${stem}-${i}`;
+}
+
+/** Obligation Number assigned on opening load: ARO- plus the TCA asset number. */
+export function suggestedObligationRef(obligations: Obligation[], assetNumber: string): string {
+  return uniqueObligationRef(obligations, `ARO-${(assetNumber || 'ARO').trim() || 'ARO'}`);
 }
 
 /** Retirement-cost asset identifier. Distinct from the TCA asset number. */
@@ -552,7 +563,6 @@ export function lockOpeningBlocked(
  * appended after these.
  */
 export const OPENING_TEMPLATE_COLUMNS: { header: string; field: keyof ParsedOpeningRow | 'aroAssetClassCode' | 'aroAssetClassName' | 'openingAroCost' | 'remainingUl' }[] = [
-  { header: 'Obligation Number', field: 'ref' },
   { header: 'Description', field: 'description' },
   { header: 'Obligation type', field: 'type' },
   { header: 'Basis', field: 'basis' },
@@ -561,10 +571,7 @@ export const OPENING_TEMPLATE_COLUMNS: { header: string; field: keyof ParsedOpen
   { header: 'Cost estimate date', field: 'costEstimateDate' },
   { header: 'Expected settlement', field: 'settlementDate' },
   { header: 'Estimated cost', field: 'estimatedCost' },
-  { header: 'Opening future value', field: 'openingFv' },
-  { header: 'Opening provision', field: 'openingProvision' },
   { header: 'TCA asset number', field: 'assetId' },
-  { header: 'ARO asset number', field: 'aroAssetNumber' },
   { header: 'ARO Asset Description', field: 'assetDescription' },
   { header: 'Asset acquisition date', field: 'assetAcquisitionDate' },
   { header: 'ARO asset class code', field: 'aroAssetClassCode' },
@@ -595,28 +602,32 @@ export function estimatedCostOf(o: Obligation): number | '' {
   return o.lines.reduce((s, l) => s + l.qty * l.rate, 0);
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Opening FV and PV from the engine, rounded to cents, for the opening event. */
+export function measureOpeningBalances(s: AppState, unit: ReportingUnit, o: Obligation): { pv: number; fv: number } {
+  const m = measureObligation(s, unit, o);
+  return { pv: round2(m.pv), fv: round2(m.fv) };
+}
+
 export function openingTemplateDataRows(
   obligations: Obligation[],
-  events: ObligationEvent[],
+  _events: ObligationEvent[],
   extraNames: string[] = [],
   classes?: AroAssetClass[],
 ): (string | number)[][] {
   const extras = openingTemplateHeaders(extraNames).slice(OPENING_TEMPLATE_COLUMNS.length);
   return obligations.map((o) => {
-    const opening = events.find((e) => e.obligationId === o.id && e.type === 'opening');
     const cols = obligationColumns(o);
     const held = typeof o.aroAssetClass === 'string' ? o.aroAssetClass : '';
     const mapped = OPENING_TEMPLATE_COLUMNS.map((c) => {
-      if (c.field === 'openingProvision') return opening?.amount ?? '';
       if (c.field === 'openingArc') return typeof o.openingArc === 'number' ? o.openingArc : '';
       if (c.field === 'openingAccumAmort') return typeof o.openingAccumAmort === 'number' ? o.openingAccumAmort : '';
-      if (c.field === 'openingFv') return typeof o.openingFv === 'number' ? o.openingFv : '';
       if (c.field === 'totalUl') return typeof o.totalUl === 'number' ? o.totalUl : '';
       if (c.field === 'expiredUl') return typeof o.expiredUl === 'number' ? o.expiredUl : '';
       if (c.field === 'estimatedCost') return estimatedCostOf(o);
       if (c.field === 'aroAssetClassCode') return classCodeOf(held, classes);
       if (c.field === 'aroAssetClassName') return classNameOf(held, classes);
-      if (c.field === 'aroAssetNumber') return String(o.aroAssetNumber ?? '');
       if (c.field === 'openingAroCost') return openingAroCostOf(o);
       if (c.field === 'remainingUl') return remainingUl(o) ?? '';
       const v = o[c.field];
@@ -637,17 +648,16 @@ export function openingTemplateNotes(): string[][] {
     [],
     ['What each row needs'],
     ['Nothing is loaded until every error is fixed. Partial files are refused.'],
-    ['Obligation Number is required and must be unique.'],
+    ['Obligation Number and ARO asset number are assigned on load. Do not put them on this sheet. The obligation number is ARO- plus the TCA asset number; the ARO asset number is ARC- plus that number. A second obligation on the same TCA gets -2, -3, and so on. Headings Reference or ARO asset number still load if a legacy file includes them.'],
     ['TCA asset number is required. It is the link to the master TCA listing; that asset is in scope. Alias: Asset number.'],
-    ['ARO asset number is optional on the file. If it is blank, one is assigned from the TCA asset number (ARC- plus that number). It is the retirement-cost asset identifier, distinct from the TCA asset number.'],
-    ['Opening provision, ARO asset (NBV) and Accumulated amortization are required numbers (0 is allowed).'],
+    ['Estimated cost, ARO asset (NBV) and Accumulated amortization are required numbers (0 is allowed).'],
+    ['Opening future value and opening provision are calculated on load from estimated cost, cost estimate date, expected settlement, inflation, contingency, and the discount curve. Do not put them on this sheet. Headings Opening future value or Opening provision still load if a legacy file includes them; those amounts are not posted.'],
     ['ARO acquisition cost is NBV plus accumulated amortization. Leave it blank on load — the listing calculates it.'],
     ['Total UL and Expired UL are required (years, or years and leftover months such as 17 yr · 9 mo). Expired UL cannot exceed Total UL. Remaining UL is Total UL minus Expired UL; leave it blank on load.'],
-    ['Dates, if present, as YYYY-MM-DD (for example 2027-03-31).'],
-    ['Estimated cost and Opening future value are optional. Extra columns are optional.'],
+    ['Dates, if present, as YYYY-MM-DD (for example 2027-03-31). Blank cost estimate date and expected settlement default to the year end.'],
+    ['Extra columns are optional.'],
     [],
     ['Obligation columns'],
-    ['Obligation Number', 'Unique id for the obligation. Headings Reference, Ref, Obligation reference and ARO ref still load into this column.'],
     ['Description', 'What is being retired.'],
     ['Obligation type', 'Reporting slice (wells, plant, …). Aliases: Type, ARO type. Kept on the register; the engine does not use it to measure.'],
     ['Basis', 'Legal or Constructive.'],
@@ -655,13 +665,10 @@ export function openingTemplateNotes(): string[][] {
     ['Region', 'Aliases: Area, Jurisdiction.'],
     ['Cost estimate date', 'Price date of the cost. Alias: Estimate date.'],
     ['Expected settlement', 'Planned retirement date. Aliases: Settlement date, Retirement date.'],
-    ['Estimated cost', 'Current-price cost. Aliases: Direct cost, Cost.'],
-    ['Opening future value', 'Converted undiscounted amount at settlement. Aliases: Opening FV, Future value, FV. Distinct from the engine\'s future value at settlement.'],
-    ['Opening provision', 'Converted liability (PV). Aliases: Provision, PV, Opening balance.'],
+    ['Estimated cost', 'Current-price cost. Required. Aliases: Direct cost, Cost, Current cost. Opening future value and opening provision are calculated from this amount on load.'],
     [],
     ['ARO and TCA asset columns'],
     ['TCA asset number', 'Required. The related tangible-capital-asset identifier on the master listing. Aliases: Asset number, Asset, Asset id, ANLN1.'],
-    ['ARO asset number', 'The retirement-cost asset identifier. Distinct from the TCA asset number. Leave blank to assign ARC- plus the TCA asset number. Aliases: ARO asset no, ARO asset id, ANLN2.'],
     ['ARO Asset Description', 'What the retirement-cost asset is. Aliases: Asset description, PPE description. TCA description comes from the master listing after load.'],
     ['Asset acquisition date', 'Optional on this extract. The master listing\'s acquisition date is shown on the obligation and ARO asset listing after load. Aliases: Acquisition date, In service date.'],
     ['ARO asset class code', 'Organisation class code (ANLKL). Stored on the obligation and used to pick the posting scenario. Aliases: Asset class code, Class code, ANLKL.'],
@@ -678,7 +685,7 @@ export function openingTemplateNotes(): string[][] {
     ['Add any further heading to the right of Remaining UL — licence, UWI, operator, cost centre, and so on. Those columns stay on the register under your headings and can be used in reporting. The engine does not read them.'],
     [],
     ['Example row (do not leave this on the sheet you load)'],
-    ['ARO-0001', 'Well abandonment', 'Wells', 'Legal', 'North', 'Alberta', '2026-12-31', '2038-06-30', '1500000', '2100000', '1200000', 'AS-10001', 'ARO-10001', 'Well 14-23 pad', '2008-06-15', '1000', 'Wells', '1200000', '400000', '800000', '25', '10', '15'],
+    ['Well abandonment', 'Wells', 'Legal', 'North', 'Alberta', '2026-12-31', '2038-06-30', '1500000', 'AS-10001', 'Well 14-23 pad', '2008-06-15', '1000', 'Wells', '1200000', '400000', '800000', '25', '10', '15'],
   ];
 }
 
@@ -687,9 +694,9 @@ function openingEventId(unitId: string, obligationId: string): string {
 }
 
 /**
- * Write the extract onto the unit: each row becomes an obligation with an
- * opening provision event and an opening ARO-asset carrying amount. Existing
- * rows with the same reference are updated; other obligations are left alone.
+ * Write the extract onto the unit: each row becomes an obligation with a
+ * measured opening provision event and an opening ARO-asset carrying amount.
+ * Existing rows with the same reference are updated; other obligations are left alone.
  */
 export function loadOpeningRegister(
   s: AppState,
@@ -716,7 +723,7 @@ export function loadOpeningRegister(
     const known = new Set(listing.map((a) => assetNumberKey(a.assetNumber)));
     const missing = parsed.rows.filter((r) => !known.has(assetNumberKey(r.assetId)));
     if (missing.length) {
-      const sample = missing.slice(0, 4).map((r) => `${r.ref} (${r.assetId})`).join(', ');
+      const sample = missing.slice(0, 4).map((r) => `${r.ref || r.description || `line ${r.line}`} (${r.assetId})`).join(', ');
       const more = missing.length > 4 ? `, and ${missing.length - 4} more` : '';
       return `${missing.length} obligation${missing.length === 1 ? '' : 's'} name a TCA asset number that is not on the master TCA listing: ${sample}${more}. Add those assets to the listing, then load this extract again.`;
     }
@@ -726,15 +733,28 @@ export function loadOpeningRegister(
   if (!period) return `${unit.entity} needs a fiscal calendar before the opening register can load.`;
 
   const fyEnd = unit.fyEnd;
-  const byRef = new Map(data.obligations.map((o) => [o.ref.trim().toLowerCase(), o]));
+  const unmatched = [...data.obligations];
   let added = 0;
   let updated = 0;
   const n = data.obligations.length;
 
+  const takeExisting = (row: ParsedOpeningRow): Obligation | undefined => {
+    if (row.ref) {
+      const key = row.ref.toLowerCase();
+      const i = unmatched.findIndex((o) => o.ref.trim().toLowerCase() === key);
+      if (i >= 0) return unmatched.splice(i, 1)[0];
+      return undefined;
+    }
+    const asset = assetNumberKey(row.assetId);
+    const i = unmatched.findIndex((o) => assetNumberKey(String(o.assetId ?? '')) === asset);
+    if (i >= 0) return unmatched.splice(i, 1)[0];
+    return undefined;
+  };
+
   for (const row of parsed.rows) {
-    const existing = byRef.get(row.ref.toLowerCase());
+    const existing = takeExisting(row);
     const id = existing?.id ?? `o-${unitId}-${n + added}`;
-    const cost = row.estimatedCost ?? row.openingProvision ?? 0;
+    const cost = row.estimatedCost ?? 0;
     const costDate = row.costEstimateDate || fyEnd;
     const settle = row.settlementDate || fyEnd;
     const lines = [{
@@ -744,17 +764,19 @@ export function loadOpeningRegister(
       rate: cost,
       source: source.filename,
     }];
+    const assetId = row.assetId || String(existing?.assetId ?? '');
+    const ref = row.ref || existing?.ref || suggestedObligationRef(data.obligations, assetId);
     const next: Obligation = {
       ...(existing ?? { adj: [] }),
       id,
-      ref: row.ref,
-      description: row.description,
+      ref,
+      description: row.description || String(existing?.description ?? '') || ref,
       costEstimateDate: costDate,
       settlementDate: settle,
-      lines: existing?.lines?.length ? existing.lines : lines,
+      lines,
       adj: existing?.adj ?? [],
-      assetId: row.assetId || existing?.assetId || '',
-      aroAssetNumber: row.aroAssetNumber || String(existing?.aroAssetNumber ?? '') || suggestedAroAssetNumber(data.obligations, String(row.assetId || existing?.assetId || row.ref)),
+      assetId,
+      aroAssetNumber: row.aroAssetNumber || String(existing?.aroAssetNumber ?? '') || suggestedAroAssetNumber(data.obligations, assetId || ref),
       assetDescription: row.assetDescription || existing?.assetDescription || '',
       assetAcquisitionDate: row.assetAcquisitionDate || existing?.assetAcquisitionDate || '',
       site: row.site || existing?.site || '',
@@ -766,12 +788,14 @@ export function loadOpeningRegister(
       scopeReason: existing?.scopeReason || '',
       openingArc: row.openingArc ?? existing?.openingArc ?? 0,
       openingAccumAmort: row.openingAccumAmort ?? existing?.openingAccumAmort ?? 0,
-      openingFv: row.openingFv ?? existing?.openingFv ?? 0,
+      openingFv: 0,
       totalUl: row.totalUl ?? existing?.totalUl,
       expiredUl: row.expiredUl ?? existing?.expiredUl,
       varianceCause: existing?.varianceCause || '',
       columns: { ...(existing ? obligationColumns(existing) : {}), ...row.columns },
     };
+    const measured = measureOpeningBalances(s, unit, next);
+    next.openingFv = measured.fv;
 
     if (existing) {
       const i = data.obligations.findIndex((o) => o.id === existing.id);
@@ -779,11 +803,9 @@ export function loadOpeningRegister(
       updated++;
     } else {
       data.obligations.push(next);
-      byRef.set(row.ref.toLowerCase(), next);
       added++;
     }
 
-    const amount = row.openingProvision ?? 0;
     const evId = openingEventId(unitId, id);
     const ev: ObligationEvent = {
       id: evId,
@@ -791,14 +813,16 @@ export function loadOpeningRegister(
       periodId: period.id,
       type: 'opening',
       date: period.starts,
-      amount,
-      sourceRowRef: row.ref,
-      note: `Opening provision from ${source.filename}.`,
+      amount: measured.pv,
+      sourceRowRef: ref,
+      note: `Opening provision measured on load from ${source.filename}.`,
     };
     const ei = data.events.findIndex((e) => e.id === evId);
     if (ei >= 0) data.events[ei] = ev;
     else data.events.push(ev);
   }
+
+  fillMissingAroAssetNumbers(data.obligations);
 
   data.tcaAssets = syncTcaScopeFromObligations(data.tcaAssets ?? [], data.obligations);
   applyLinkedObligationScope(data.obligations, data.tcaAssets);

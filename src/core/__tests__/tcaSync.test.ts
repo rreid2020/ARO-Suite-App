@@ -74,7 +74,7 @@ function ready() {
   const data = state.data[id];
   data.periods[0].status = 'Open';
   const parsed = parseOpeningRegister([
-    'Obligation Number,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+    'Obligation Number,Estimated cost,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
     'ARO-0001,1200000,800000,400000,25,10,AS-10001',
   ].join('\n'));
   loadOpeningRegister(state, 't1', id, parsed, { filename: 'open.csv', text: 'x' });

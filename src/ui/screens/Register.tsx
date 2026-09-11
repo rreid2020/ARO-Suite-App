@@ -129,7 +129,7 @@ const POSTED_KEYS = new Set(POSTED_COLUMNS.map((c) => c.key));
 const POSTED_BOOKS_KEYS = [
   'ref', 'description', 'site', 'aroAssetClassCode', 'aroAssetClassName', '_open_term',
   '_ob_open', '_ob_settle', '_ob_accr_ex', '_ob_cost', '_ob_term', '_ob_writeoff', '_ob_mass',
-  '_ob_new', '_ob_accr_new', '_ob_fx', '_ob_close',
+  '_ob_new', '_ob_accr_new', '_ob_fx', '_ob_close', '_fv',
   'remainingUl', '_arc_open', '_arc_add', '_arc_amort', '_arc_close',
 ];
 
@@ -246,6 +246,7 @@ export function Register() {
           : { ...c, options: classNames };
       }
       if (set === 'Posted books' && c.key === 'remainingUl') return { ...c, group: 'ARO asset' as const, width: 140 };
+      if (set === 'Posted books' && c.key === '_fv') return { ...c, group: 'Closing' as const, label: 'FV', width: 120 };
       if (set === 'Posted books' && c.key === 'ref') return { ...c, width: 108 };
       if (set === 'Posted books' && c.key === 'description') return { ...c, width: 168 };
       if (set === 'Posted books' && c.key === 'site') return { ...c, width: 96 };
@@ -810,7 +811,7 @@ export function Register() {
                           : c.key.startsWith('_tca_')
                           ? <span>{tcaJoinDisplay(c.key, tcaByObl.get(o.id))}</span>
                           : c.kind === 'derived'
-                          ? <span title={c.basis ? `Basis: ${c.basis}` : POSTED_KEYS.has(c.key) ? 'Event-ledger amounts through the selected period' : undefined}>{derivedCell(c.key, d, unit.currency, booksById.get(o.id), postedById.get(o.id))}</span>
+                          ? <span title={c.key === '_fv' ? 'Future value at settlement, measured from estimated cost, dates, inflation, contingency and the discount curve.' : c.basis ? `Basis: ${c.basis}` : POSTED_KEYS.has(c.key) ? 'Event-ledger amounts through the selected period' : undefined}>{derivedCell(c.key, d, unit.currency, booksById.get(o.id), postedById.get(o.id))}</span>
                           : c.key === 'inProductiveUse'
                             ? (
                               <select
@@ -891,7 +892,12 @@ export function Register() {
                         ? 'Total'
                         : POSTED_KEYS.has(c.key)
                           ? currency(filtered.reduce((s, o) => s + (postedAmount(c.key, postedById.get(o.id)) ?? 0), 0), unit.currency)
-                          : ''}
+                          : c.key === '_fv'
+                            ? currency(filtered.reduce((s, o) => {
+                                const fv = derived.byId.get(o.id)?.fv;
+                                return s + (typeof fv === 'number' && Number.isFinite(fv) ? fv : 0);
+                              }, 0), unit.currency)
+                            : ''}
                     </td>
                   ))}
                 </tr>

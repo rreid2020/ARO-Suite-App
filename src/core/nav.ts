@@ -41,7 +41,7 @@ export const STEPS: StepDef[] = [
   { id: 'periods', label: 'Periods & close', phase: 'Setup', domain: 'periods',
     purpose: 'This reporting unit\'s fiscal calendar and the status of every period in it. The calendar type is set on Unit settings; this step is the generated grid and late-data policy.' },
   { id: 'unit-opening', label: 'Opening register', phase: 'Setup', domain: 'register',
-    purpose: 'Master TCA listing plus the obligation and ARO asset listing, linked by TCA asset number. Each obligation also carries an ARO asset number. Assets with a related obligation are in scope; mark every other asset In scope, Out of scope, or Undecided so there are no gaps. After the register agrees to the trial balance, lock opening balances. Later TCA listing changes belong on ARO scoping, not here.' },
+    purpose: 'Master TCA listing plus the obligation and ARO asset listing, linked by TCA asset number. Obligation Number and ARO asset number are assigned on load. Assets with a related obligation are in scope; mark every other asset In scope, Out of scope, or Undecided so there are no gaps. After the register agrees to the trial balance, lock opening balances. Later TCA listing changes belong on ARO scoping, not here.' },
 
   // ── Prepare ────────────────────────────────────────────────────────────
   { id: 'intake', label: 'Data intake', phase: 'Prepare', domain: 'register', auditor: true, firm: false,

@@ -177,7 +177,7 @@ describe('loadTcaListing and scoping', () => {
   it('marks assets with a related obligation in scope and leaves the rest Undecided', () => {
     const { state, id } = unit();
     const obl = [
-      'Obligation Number,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'Obligation Number,Estimated cost,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
       'ARO-1,100,40,10,25,10,AS-1',
     ].join('\n');
     loadOpeningRegister(state, 't1', id, parseOpeningRegister(obl), { filename: 'open.csv', text: obl });
@@ -227,7 +227,7 @@ describe('loadTcaListing and scoping', () => {
   it('will not let a linked asset be scoped out', () => {
     const { state, id } = unit();
     const obl = [
-      'Obligation Number,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'Obligation Number,Estimated cost,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
       'ARO-1,100,40,10,25,10,AS-1',
     ].join('\n');
     loadOpeningRegister(state, 't1', id, parseOpeningRegister(obl), { filename: 'open.csv', text: obl });
@@ -256,13 +256,13 @@ describe('loadTcaListing and scoping', () => {
   it('blocks lock while an obligation names an asset that is not on the listing', () => {
     const { state, id } = unit();
     const obl = [
-      'Obligation Number,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'Obligation Number,Estimated cost,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
       'ARO-1,100,40,10,25,10,AS-MISSING',
     ].join('\n');
     loadOpeningRegister(state, 't1', id, parseOpeningRegister(obl), { filename: 'open.csv', text: obl });
     const tca = ['Asset number,Description', 'AS-OTHER,Other'].join('\n');
     loadTcaListing(state, 't1', id, parseTcaListing(tca), { filename: 'tca.csv', text: tca });
-    state.data[id].openingGlProvision = 100;
+    state.data[id].openingGlProvision = 110;
     state.data[id].openingGlArc = 40;
     expect(lockOpeningBlocked(state.data[id])).toMatch(/not on the master TCA listing/i);
     const gaps = tcaScopingGaps(state.data[id].tcaAssets, state.data[id].obligations);
@@ -274,7 +274,7 @@ describe('loadTcaListing and scoping', () => {
     const tca = ['Asset number,Description', 'AS-1,Well pad'].join('\n');
     loadTcaListing(state, 't1', id, parseTcaListing(tca), { filename: 'tca.csv', text: tca });
     const obl = [
-      'Obligation Number,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'Obligation Number,Estimated cost,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
       'ARO-1,100,40,10,25,10,AS-MISSING',
     ].join('\n');
     const result = loadOpeningRegister(state, 't1', id, parseOpeningRegister(obl), { filename: 'open.csv', text: obl });
@@ -395,7 +395,7 @@ describe('go-forward TCA listing after opening lock', () => {
   it('freezes the conversion listing on lock and keeps later loads off it', () => {
     const { state, id } = unit();
     const obl = [
-      'Obligation Number,Opening provision,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'Obligation Number,Estimated cost,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
       'ARO-1,100,40,10,25,10,AS-1',
     ].join('\n');
     loadOpeningRegister(state, 't1', id, parseOpeningRegister(obl), { filename: 'open.csv', text: obl });
@@ -406,7 +406,7 @@ describe('go-forward TCA listing after opening lock', () => {
     ].join('\n');
     loadTcaListing(state, 't1', id, parseTcaListing(tca), { filename: 'tca.csv', text: tca });
     const data = state.data[id];
-    data.openingGlProvision = 100;
+    data.openingGlProvision = 110;
     data.openingGlAroCost = 50;
     data.openingGlAroAccum = 10;
     data.openingGlTcaCost = 0;

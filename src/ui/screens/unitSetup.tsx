@@ -481,7 +481,7 @@ export function UnitOpening() {
     const dataRows = openingTemplateDataRows(openingOb, data?.events ?? [], extras, state.settings[tenant.id].aroAssetClasses);
     const moneyIdx = new Set(
       headers.map((h, i) => (
-        ['Estimated cost', 'Opening provision', 'ARO acquisition cost', 'ARO asset', 'Accumulated amortization', 'Opening future value'].includes(h) ? i : -1
+        ['Estimated cost', 'ARO acquisition cost', 'ARO asset', 'Accumulated amortization'].includes(h) ? i : -1
       )).filter((i) => i >= 0),
     );
     const file = `${unit.entity.replace(/\W+/g, '-')}-obligation-and-aro-asset-listing.xlsx`;
@@ -743,7 +743,7 @@ export function UnitOpening() {
         title={openingOb.length === 0 ? 'Load existing obligations and opening balances' : `${openingOb.length} obligation${openingOb.length === 1 ? '' : 's'} on the listing`}
         note={frozen
           ? 'These are the conversion obligations frozen when opening balances were locked. New in-year obligations created from ARO scoping appear on ARO scoping and the ARO Register, not here.'
-          : 'Each row is an obligation from the conversion extract. ARO asset number, description, acquisition date, class, acquisition cost, accumulated amortization, NBV and useful life are the extract\'s ARO asset columns. Lock opening balances here once both listings agree to their GL totals.'}
+          : 'Each row is an obligation from the conversion extract. Obligation Number and ARO asset number are assigned on load. Description, acquisition date, class, acquisition cost, accumulated amortization, NBV and useful life are the extract\'s ARO asset columns. Lock opening balances here once both listings agree to their GL totals.'}
         actions={
           <>
             <button className="btn btn-secondary btn-sm" type="button" onClick={exportListings}>
@@ -762,9 +762,9 @@ export function UnitOpening() {
       >
         {importing && allowed && !tcaLocked && (
           <div style={{ marginBottom: 16, padding: 12, background: 'var(--color-surface)' }}>
-            <Field label="Paste or import the opening register" help="Export the Excel template first. Load by saving the Obligation & ARO Asset Listing sheet as CSV, or copy that sheet (header row included) and paste it here. Every required field must be filled — if anything needed is missing or invalid, nothing is loaded and you will see how to fix each error. ARO acquisition cost is NBV plus accumulated amortization. Remaining useful life is Total UL minus Expired UL after a successful load.">
+            <Field label="Paste or import the opening register" help="Export the Excel template first. Load by saving the Obligation & ARO Asset Listing sheet as CSV, or copy that sheet (header row included) and paste it here. Obligation Number and ARO asset number are assigned on load — they are not on the template. Opening future value and opening provision are calculated on load from estimated cost, dates, inflation, contingency, and the discount curve. Every required field must be filled — if anything needed is missing or invalid, nothing is loaded and you will see how to fix each error. ARO acquisition cost is NBV plus accumulated amortization. Remaining useful life is Total UL minus Expired UL after a successful load.">
               <textarea className="input" rows={7} value={paste} onChange={(e) => setPaste(e.target.value)}
-                placeholder={'Obligation Number,Description,Obligation type,Basis,Site,Region,Cost estimate date,Expected settlement,Estimated cost,Opening future value,Opening provision,TCA asset number,ARO asset number,ARO Asset Description,Asset acquisition date,ARO asset class code,ARO asset class name,ARO acquisition cost,Accumulated amortization,ARO asset,Total UL,Expired UL,Remaining UL\nARO-0001,Well abandonment,Wells,Legal,North,AB,2026-12-31,2038-06-30,1500000,2100000,1200000,AS-10001,ARO-10001,Well 14-23 pad,2008-06-15,11010,Buildings,1200000,400000,800000,25,10,15'} />
+                placeholder={'Description,Obligation type,Basis,Site,Region,Cost estimate date,Expected settlement,Estimated cost,TCA asset number,ARO Asset Description,Asset acquisition date,ARO asset class code,ARO asset class name,ARO acquisition cost,Accumulated amortization,ARO asset,Total UL,Expired UL,Remaining UL\nWell abandonment,Wells,Legal,North,AB,2026-12-31,2038-06-30,1500000,AS-10001,Well 14-23 pad,2008-06-15,11010,Buildings,1200000,400000,800000,25,10,15'} />
               <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                 <button className="btn btn-primary btn-sm" type="button" disabled={!paste.trim()}
                   onClick={() => load(paste, 'pasted block')}>Load pasted extract</button>
