@@ -71,8 +71,6 @@ export function Rollf() {
         { label: 'Opening balances', value: locked ? 'Locked' : 'Not locked', tone: locked ? 'ok' : 'warn' },
         { label: 'Closing', value: currency(activity.closing, unit.currency) },
         { label: 'Future value', value: currency(activity.futureValue, unit.currency) },
-        { label: 'Measured closing', value: currency(activity.measuredClosing, unit.currency) },
-        { label: 'Measured − books', value: currency(activity.residual, unit.currency), tone: activity.foots ? 'ok' : 'bad' },
       ]} />
 
       <Block kicker="In-year activity" title="Opening balances to closing, after conversion"
