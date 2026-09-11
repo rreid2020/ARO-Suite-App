@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activityByPeriod, activityStatement, classifyRevisionEvent, existedAtOpening, isExistingAro, isWriteOff, txHistoryEvents } from '../activity';
+import { activityByPeriod, activityStatement, classifyRevisionEvent, existedAtOpening, isExistingAro, isWriteOff, recognizedThroughPeriod, txHistoryEvents } from '../activity';
 import type { Obligation } from '../types';
 import type { ObligationEvent } from '../../engine/rollforward';
 
@@ -115,8 +115,41 @@ describe('activityStatement', () => {
     expect(year.lines.map((l) => l.amount)).toEqual([
       year.openingProvision, year.settlement, year.accretionExisting,
       year.costAdjustments, year.termAdjustments, year.writeOffs, year.massUpdate,
-      year.newAro, year.accretionNew, year.fx, year.closing,
+      year.newAro, year.accretionNew, year.fx, year.closing, year.futureValue,
     ]);
+    expect(year.lines.at(-1)).toMatchObject({ key: 'futureValue', label: 'Future value', amount: 0 });
+  });
+
+  it('puts a measured future value after closing without changing the identity', () => {
+    const { year } = activityByPeriod(
+      [existing, newbie, writtenOff],
+      events,
+      [{ id: 'p1', code: 'FY2027 P01' }, { id: 'p2', code: 'FY2027 P02' }],
+      1_210,
+      { year: 9_000, byPeriodId: { p1: 8_000, p2: 9_000 } },
+    );
+    expect(year.closing).toBe(1_210);
+    expect(year.futureValue).toBe(9_000);
+    expect(year.lines.at(-2)?.key).toBe('closing');
+    expect(year.lines.at(-1)).toMatchObject({ key: 'futureValue', amount: 9_000 });
+  });
+});
+
+describe('recognizedThroughPeriod', () => {
+  it('includes conversion rows from P01 and new ARO only once added', () => {
+    const existing = o({ id: 'old', ref: 'ARO-1' });
+    const newbie = o({ id: 'new', ref: 'ARO-2', status: 'In scope' });
+    const periods = [
+      { id: 'p1', no: 1, fiscalYear: 2027 },
+      { id: 'p2', no: 2, fiscalYear: 2027 },
+    ];
+    const events = [
+      ev({ id: 'o1', obligationId: 'old', type: 'opening', amount: 1, periodId: 'p1' }),
+      ev({ id: 'add', obligationId: 'new', type: 'addition', amount: 50, periodId: 'p2' }),
+    ];
+    expect(recognizedThroughPeriod(existing, events, periods, periods[0])).toBe(true);
+    expect(recognizedThroughPeriod(newbie, events, periods, periods[0])).toBe(false);
+    expect(recognizedThroughPeriod(newbie, events, periods, periods[1])).toBe(true);
   });
 });
 

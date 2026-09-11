@@ -33,6 +33,8 @@ export interface ActivityStatement {
   accretionNew: number;
   fx: number;
   closing: number;
+  /** Future value at settlement of the population as at the statement date. Not a movement. */
+  futureValue: number;
   measuredClosing: number;
   residual: number;
   foots: boolean;
@@ -64,6 +66,16 @@ export const ACTIVITY_COLUMNS: {
   { key: 'accretionNew', label: 'Accretion on new ARO', group: 'New' },
   { key: 'fx', label: 'Exchange differences', group: 'New' },
   { key: 'closing', label: 'Closing', group: 'Closing' },
+];
+
+/** Closing provision plus future value — FV is measured, not part of the identity. */
+export const ACTIVITY_TABLE_COLUMNS: {
+  key: keyof Pick<ActivityStatement, typeof ACTIVITY_COLUMNS[number]['key'] | 'futureValue'>;
+  label: string;
+  group: ActivityLine['group'];
+}[] = [
+  ...ACTIVITY_COLUMNS,
+  { key: 'futureValue', label: 'Future value', group: 'Closing' },
 ];
 
 const WRITE_OFF = /write[\s-]?off/i;
@@ -139,7 +151,7 @@ function isExistingId(obligationId: string, existingIds: Set<string> | null): bo
 }
 
 function linesFrom(stmt: ActivityStatement): ActivityLine[] {
-  return ACTIVITY_COLUMNS.map((c) => ({
+  return ACTIVITY_TABLE_COLUMNS.map((c) => ({
     key: c.key,
     label: c.label,
     group: c.group,
@@ -147,8 +159,14 @@ function linesFrom(stmt: ActivityStatement): ActivityLine[] {
   }));
 }
 
+function withFutureValue(stmt: ActivityStatement, futureValue: number): ActivityStatement {
+  const next = { ...stmt, futureValue: round2(futureValue) };
+  next.lines = linesFrom(next);
+  return next;
+}
+
 function finish(
-  amounts: Omit<ActivityStatement, 'closing' | 'measuredClosing' | 'residual' | 'foots' | 'lines'>,
+  amounts: Omit<ActivityStatement, 'closing' | 'futureValue' | 'measuredClosing' | 'residual' | 'foots' | 'lines'>,
   measuredClosing: number | null,
 ): ActivityStatement {
   const closing = round2(
@@ -167,6 +185,7 @@ function finish(
   const stmt: ActivityStatement = {
     ...amounts,
     closing,
+    futureValue: 0,
     measuredClosing: measuredClosing ?? closing,
     residual,
     foots: Math.abs(residual) <= CENT,
@@ -258,8 +277,29 @@ export function activityStatement(
   obligations: Obligation[],
   events: ObligationEvent[],
   measuredTotal: number,
+  futureValue = 0,
 ): ActivityStatement {
-  return activityFromEvents(obligations, events, events, measuredTotal);
+  return withFutureValue(activityFromEvents(obligations, events, events, measuredTotal), futureValue);
+}
+
+/** Whether this obligation had been recognised on the ledger by this period. */
+export function recognizedThroughPeriod(
+  o: Obligation,
+  events: ObligationEvent[],
+  periods: Pick<Period, 'id' | 'no' | 'fiscalYear'>[],
+  asAt: Pick<Period, 'no' | 'fiscalYear'>,
+): boolean {
+  if (o.status === 'Scoped out') return false;
+  const anyOpening = events.some((e) => e.type === 'opening');
+  if (!anyOpening) return true;
+  const byId = new Map(periods.map((p) => [p.id, p]));
+  return events.some((e) => {
+    if (e.obligationId !== o.id) return false;
+    if (e.type === 'opening') return true;
+    if (e.type !== 'addition' && e.type !== 'expense-recognition') return false;
+    const p = byId.get(e.periodId);
+    return !!p && p.fiscalYear === asAt.fiscalYear && p.no <= asAt.no;
+  });
 }
 
 /** Period slices of the same statement. Year totals equal the consolidated view. */
@@ -268,16 +308,20 @@ export function activityByPeriod(
   events: ObligationEvent[],
   periods: Pick<Period, 'id' | 'code'>[],
   measuredTotal: number,
+  fv?: { year: number; byPeriodId: Record<string, number> },
 ): { periods: PeriodActivity[]; year: ActivityStatement } {
   const ids = new Set(periods.map((p) => p.id));
   const inYear = events.filter((e) => ids.has(e.periodId));
-  const year = activityFromEvents(obligations, events, inYear, measuredTotal);
+  const year = withFutureValue(activityFromEvents(obligations, events, inYear, measuredTotal), fv?.year ?? 0);
   return {
     year,
     periods: periods.map((p) => ({
       periodId: p.id,
       code: p.code,
-      ...activityFromEvents(obligations, events, inYear.filter((e) => e.periodId === p.id), null),
+      ...withFutureValue(
+        activityFromEvents(obligations, events, inYear.filter((e) => e.periodId === p.id), null),
+        fv?.byPeriodId[p.id] ?? 0,
+      ),
     })),
   };
 }

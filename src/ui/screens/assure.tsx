@@ -9,7 +9,8 @@ import { useDerived } from '../../core/useDerived';
 import { canEdit, canLockPeriod, roleById, signLevel } from '../../core/authority';
 import { YEAR_END_GATES, runGates, YearEndState } from '../../core/gates';
 import { Block, Empty, Field, currency, num, SheetTable, Stats, Tag } from '../components';
-import { ACTIVITY_COLUMNS, activityByPeriod } from '../../core/activity';
+import { ACTIVITY_TABLE_COLUMNS, activityByPeriod, recognizedThroughPeriod } from '../../core/activity';
+import { populationFv } from '../../core/measure';
 import { download, S } from '../../xlsx/write';
 
 /* ══ Evidence & freeze ═════════════════════════════════════════════════ */
@@ -223,10 +224,20 @@ export function Sampling() {
 /* ══ Completeness pack ═════════════════════════════════════════════════ */
 
 export function Complete() {
+  const { state } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const derived = useDerived()!;
-  const activity = activityByPeriod(data.obligations, data.events, data.periods, derived.total);
+  const fv = useMemo(() => {
+    const inScope = data.obligations.filter((o) => o.status !== 'Scoped out');
+    const byPeriodId: Record<string, number> = {};
+    for (const p of data.periods) {
+      const pop = inScope.filter((o) => recognizedThroughPeriod(o, data.events, data.periods, p));
+      byPeriodId[p.id] = populationFv(state, unit, pop, p.ends);
+    }
+    return { year: populationFv(state, unit, inScope), byPeriodId };
+  }, [state, unit, data]);
+  const activity = activityByPeriod(data.obligations, data.events, data.periods, derived.total, fv);
 
   const rows = derived.rows.map((d) => {
     const o = data.obligations.find((x) => x.id === d.obligationId)!;
@@ -286,14 +297,14 @@ export function Complete() {
       {
         name: 'Roll-forward',
         rows: [
-          ['Period', ...ACTIVITY_COLUMNS.map((c) => c.label)].map((h) => ({ v: h, s: S.head })),
+          ['Period', ...ACTIVITY_TABLE_COLUMNS.map((c) => c.label)].map((h) => ({ v: h, s: S.head })),
           ...activity.periods.map((p) => [
             p.code,
-            ...ACTIVITY_COLUMNS.map((c) => ({ v: p[c.key], s: S.money })),
+            ...ACTIVITY_TABLE_COLUMNS.map((c) => ({ v: p[c.key], s: S.money })),
           ]),
-          [{ v: 'Year', s: S.head }, ...ACTIVITY_COLUMNS.map((c) => ({ v: activity.year[c.key], s: S.money }))],
+          [{ v: 'Year', s: S.head }, ...ACTIVITY_TABLE_COLUMNS.map((c) => ({ v: activity.year[c.key], s: S.money }))],
         ] as never,
-        cols: [14, ...ACTIVITY_COLUMNS.map(() => 16)],
+        cols: [14, ...ACTIVITY_TABLE_COLUMNS.map(() => 16)],
         freeze: 1,
       },
     ];

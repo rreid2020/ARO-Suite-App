@@ -59,3 +59,15 @@ export function unitDeriveOptions(s: AppState, unit: ReportingUnit): DeriveOptio
 export function measureObligation(s: AppState, unit: ReportingUnit, o: Obligation, asAt?: string): Derived {
   return derive(o, unitAssumptions(unit, asAt), unitDeriveOptions(s, unit));
 }
+
+/** Future value at settlement of the given population, as at `asAt` (or the unit year end). */
+export function populationFv(s: AppState, unit: ReportingUnit, obligations: Obligation[], asAt?: string): number {
+  const assumptions = unitAssumptions(unit, asAt);
+  const opts = unitDeriveOptions(s, unit);
+  let fv = 0;
+  for (const o of obligations) {
+    const d = derive(o, assumptions, opts);
+    if (Number.isFinite(d.fv)) fv += d.fv;
+  }
+  return Math.round(fv * 100) / 100;
+}

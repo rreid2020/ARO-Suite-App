@@ -6,8 +6,9 @@ import React, { useMemo, useState } from 'react';
 import { useStore, useUnit, useUnitData } from '../../core/store';
 import { useDerived } from '../../core/useDerived';
 import { canEdit } from '../../core/authority';
-import { ACTIVITY_COLUMNS, activityByPeriod } from '../../core/activity';
+import { ACTIVITY_TABLE_COLUMNS, activityByPeriod, recognizedThroughPeriod } from '../../core/activity';
 import { openingLocked } from '../../core/openingLoad';
+import { populationFv } from '../../core/measure';
 import { derive } from '../../engine/derive';
 import { Curve } from '../../engine/curve';
 import { Obligation } from '../../core/types';
@@ -18,16 +19,27 @@ import { download, S } from '../../xlsx/write';
 /* ══ Roll-forward & disclosure ═════════════════════════════════════════ */
 
 export function Rollf() {
-  const { ui, apply } = useStore();
+  const { ui, apply, state } = useStore();
   const unit = useUnit()!;
   const data = useUnitData()!;
   const derived = useDerived()!;
-  const { periods: periodRows, year: activity } = activityByPeriod(data.obligations, data.events, data.periods, derived.total);
+  const fv = useMemo(() => {
+    const inScope = data.obligations.filter((o) => o.status !== 'Scoped out');
+    const byPeriodId: Record<string, number> = {};
+    for (const p of data.periods) {
+      const pop = inScope.filter((o) => recognizedThroughPeriod(o, data.events, data.periods, p));
+      byPeriodId[p.id] = populationFv(state, unit, pop, p.ends);
+    }
+    return { year: populationFv(state, unit, inScope), byPeriodId };
+  }, [state, unit, data]);
+  const { periods: periodRows, year: activity } = activityByPeriod(
+    data.obligations, data.events, data.periods, derived.total, fv,
+  );
   const locked = openingLocked(data);
 
   const exportRf = () => {
-    const moneyKeys = ACTIVITY_COLUMNS.map((c) => c.key);
-    const head = ['Period', ...ACTIVITY_COLUMNS.map((c) => c.label)];
+    const moneyKeys = ACTIVITY_TABLE_COLUMNS.map((c) => c.key);
+    const head = ['Period', ...ACTIVITY_TABLE_COLUMNS.map((c) => c.label)];
     const out: any[][] = [
       [{ v: `${unit.entity} — ARO roll-forward`, s: S.title }],
       [`Year ending ${unit.fyEnd}`, `Currency ${unit.currency}`],
@@ -47,7 +59,7 @@ export function Rollf() {
     ];
     download(`${unit.entity.replace(/\W+/g, '-')}-rollforward-${unit.fyEnd}.xlsx`, [
       { name: 'Activity', rows: act, cols: [64, 16], freeze: 4 },
-      { name: 'By period', rows: out, cols: [14, ...ACTIVITY_COLUMNS.map(() => 16)], freeze: 4 },
+      { name: 'By period', rows: out, cols: [14, ...ACTIVITY_TABLE_COLUMNS.map(() => 16)], freeze: 4 },
     ]);
   };
 
@@ -58,13 +70,14 @@ export function Rollf() {
         { label: 'Opening ARO asset', value: currency(activity.openingArc, unit.currency) },
         { label: 'Opening balances', value: locked ? 'Locked' : 'Not locked', tone: locked ? 'ok' : 'warn' },
         { label: 'Closing', value: currency(activity.closing, unit.currency) },
+        { label: 'Future value', value: currency(activity.futureValue, unit.currency) },
         { label: 'Measured closing', value: currency(activity.measuredClosing, unit.currency) },
-        { label: 'Residual', value: currency(activity.residual, unit.currency), tone: activity.foots ? 'ok' : 'bad' },
+        { label: 'Measured − books', value: currency(activity.residual, unit.currency), tone: activity.foots ? 'ok' : 'bad' },
       ]} />
 
       <Block kicker="In-year activity" title="Opening balances to closing, after conversion"
         note={locked
-          ? 'The year in one column. Settlement and accretion come from the event ledger. Change of estimate on existing ARO is cost adjustments, term adjustments, write-offs, and the year-end mass update for inflation and interest rates. New ARO is initial recognition this year; accretion on those rows is shown separately. The period table below is the same lines, split by period.'
+          ? 'The year in one column. Settlement and accretion come from the event ledger. Change of estimate on existing ARO is cost adjustments, term adjustments, write-offs, and the year-end mass update for inflation and interest rates. New ARO is initial recognition this year; accretion on those rows is shown separately. Future value is the settlement amount of the closing population, measured as at year end — it does not enter the provision identity. The period table below is the same lines, split by period.'
           : 'Lock opening balances on Opening register after reconciling to the trial balance. Until then, opening on this statement is the converted provision loaded so far (or nil if none).'}
         actions={<button className="btn btn-secondary btn-sm" onClick={exportRf}>Export to Excel</button>}>
         <SheetTable
@@ -81,7 +94,7 @@ export function Rollf() {
       </Block>
 
       <Block kicker="In-year activity" title="Opening to closing, per period and for the year"
-        note="The same lines as the consolidated table, one column each. Year totals are that table. Opening sits in the period that holds the conversion events; later periods show the movements posted in that period.">
+        note="The same lines as the consolidated table, one column each. Year totals are that table for the provision movements. Opening sits in the period that holds the conversion events; later periods show the movements posted in that period. Future value is measured as at each period end; the year figure is as at year end, not the sum of the periods.">
         <SheetTable
           rows={periodRows}
           rowKey={(p) => p.periodId}
@@ -89,12 +102,12 @@ export function Rollf() {
           footer={
             <tr>
               <td className={groupToneClass('lead')} style={{ fontFamily: 'var(--font-heading)', fontWeight: 800 }}>Year</td>
-              {ACTIVITY_COLUMNS.map((c, i) => {
-                const start = i === 0 || ACTIVITY_COLUMNS[i - 1].group !== c.group;
-                const extra = c.key === 'closing' ? 'num derived' : 'num';
+              {ACTIVITY_TABLE_COLUMNS.map((c, i) => {
+                const start = i === 0 || ACTIVITY_TABLE_COLUMNS[i - 1].group !== c.group;
+                const extra = c.key === 'closing' || c.key === 'futureValue' ? 'num derived' : 'num';
                 return (
                   <td key={c.key} className={groupToneClass(c.group, start, extra)}
-                    style={c.key === 'closing' ? { fontFamily: 'var(--font-heading)', fontWeight: 800 } : undefined}>
+                    style={c.key === 'closing' || c.key === 'futureValue' ? { fontFamily: 'var(--font-heading)', fontWeight: 800 } : undefined}>
                     {currency(activity[c.key], unit.currency)}
                   </td>
                 );
@@ -103,13 +116,13 @@ export function Rollf() {
           }
           columns={[
             { key: 'period', header: 'Period', value: (p) => p.code, cell: (p) => p.code, thClassName: groupToneClass('lead'), tdClassName: groupToneClass('lead') },
-            ...ACTIVITY_COLUMNS.map((c) => ({
+            ...ACTIVITY_TABLE_COLUMNS.map((c) => ({
               key: c.key,
               header: c.label,
               kind: 'number' as const,
               group: c.group,
               thClassName: 'num',
-              tdClassName: c.key === 'closing' ? 'num derived' : 'num',
+              tdClassName: c.key === 'closing' || c.key === 'futureValue' ? 'num derived' : 'num',
               value: (p: (typeof periodRows)[number]) => p[c.key],
               cell: (p: (typeof periodRows)[number]) => currency(p[c.key], unit.currency),
             })),
