@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyAppState } from '../emptyState';
 import { addReportingUnit } from '../createUnit';
-import { OPENING_TEMPLATE_COLUMNS, loadOpeningRegister, lockOpeningBlocked, measureOpeningBalances, obligationColumnNames, obligationReconciled, openingArcTotal, openingAroCostTotal, openingLocked, openingProvisionTotal, openingReconciled, openingTemplateDataRows, openingTemplateHeaders, openingTemplateNotes, parseOpeningRegister, remainingUl } from '../openingLoad';
+import { OPENING_TEMPLATE_COLUMNS, fillMissingAroAssetNumbers, loadOpeningRegister, lockOpeningBlocked, measureOpeningBalances, obligationColumnNames, obligationReconciled, openingArcTotal, openingAroCostTotal, openingLocked, openingProvisionTotal, openingReconciled, openingTemplateDataRows, openingTemplateHeaders, openingTemplateNotes, parseOpeningRegister, remainingUl } from '../openingLoad';
 import { loadTcaListing, parseTcaListing } from '../tcaListing';
 import { obligationExtractColumns } from '../../ui/screens/openingListings';
 import { measureObligation } from '../measure';
@@ -364,6 +364,32 @@ describe('loadOpeningRegister', () => {
     loadOpeningRegister(state, 't1', id, parseOpeningRegister(text), { filename: 'opening.csv', text });
     expect(state.data[id].obligations.map((o) => o.aroAssetNumber).sort()).toEqual(['ARC-AS-1', 'ARC-AS-1-2']);
     expect(openingTemplateHeaders()).not.toContain('ARO asset number');
+  });
+
+  it('back-fills blank ARO asset numbers after opening is locked', () => {
+    const state = emptyAppState();
+    state.settings['t1'] = settings();
+    const id = addReportingUnit(state, {
+      tenantId: 't1', entity: 'Infrastructure and Environment', fyEnd: '2027-03-31', currency: 'CAD',
+    });
+    const text = [
+      'Reference,Estimated cost,ARO asset,Accumulated amortization,Total UL,Expired UL,Asset number',
+      'ARO-1,100,40,10,25,10,ASSET034',
+      'ARO-2,80,30,8,20,8,ASSET032',
+      'ARO-3,90,35,9,22,9,ASSET041',
+    ].join('\n');
+    loadOpeningRegister(state, 't1', id, parseOpeningRegister(text), { filename: 'opening.csv', text });
+    const [a, b, c] = state.data[id].obligations;
+    a.aroAssetNumber = '';
+    b.aroAssetNumber = '';
+    c.aroAssetNumber = 'ARC-ASSET041';
+    state.data[id].conversionAgreed = true;
+    expect(openingLocked(state.data[id])).toBe(true);
+    expect(fillMissingAroAssetNumbers(state.data[id].obligations)).toBe(2);
+    expect(state.data[id].obligations.map((o) => o.aroAssetNumber).sort()).toEqual([
+      'ARC-ASSET032', 'ARC-ASSET034', 'ARC-ASSET041',
+    ]);
+    expect(fillMissingAroAssetNumbers(state.data[id].obligations)).toBe(0);
   });
 
   it('updates an existing reference on reload instead of duplicating it', () => {

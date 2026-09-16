@@ -136,7 +136,7 @@ const EXPORT_MONEY_KEYS = new Set([
 ]);
 
 const POSTED_BOOKS_KEYS = [
-  'ref', 'description', 'site', 'aroAssetClassCode', 'aroAssetClassName', '_open_term',
+  'ref', 'description', 'aroAssetNumber', 'assetId', 'site', 'aroAssetClassCode', 'aroAssetClassName', '_open_term',
   '_ob_open', '_ob_settle', '_ob_accr_ex', '_ob_cost', '_ob_term', '_ob_writeoff', '_ob_mass',
   '_ob_new', '_ob_accr_new', '_ob_fx', '_ob_close', '_fv',
   'remainingUl', '_arc_open', '_arc_add', '_arc_amort', '_arc_close',
@@ -257,6 +257,8 @@ export function Register() {
       if (set === 'Posted books' && c.key === '_fv') return { ...c, group: 'Closing' as const, label: 'FV', width: 120 };
       if (set === 'Posted books' && c.key === 'ref') return { ...c, width: 108 };
       if (set === 'Posted books' && c.key === 'description') return { ...c, width: 168 };
+      if (set === 'Posted books' && c.key === 'aroAssetNumber') return { ...c, group: 'Identity' as const, width: 120 };
+      if (set === 'Posted books' && c.key === 'assetId') return { ...c, group: 'Identity' as const, width: 120 };
       if (set === 'Posted books' && c.key === 'site') return { ...c, width: 96 };
       return c;
     }).filter(Boolean),

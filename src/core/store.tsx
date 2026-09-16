@@ -14,7 +14,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { useAuth, useUser } from '@clerk/react';
 import { AppState, UiState } from './types';
 import { AuditEvent, ChangeEntry, Refusal, WriteRequest, WriteResult, mut, note, restore, setPath } from './writePath';
-import { Domain } from './authority';
+import { canEdit, Domain } from './authority';
+import { fillMissingAroAssetNumbers } from './openingLoad';
 import { Repository } from './repository';
 import { HttpRepository } from './httpRepository';
 import { emptyAppState } from './emptyState';
@@ -233,6 +234,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     },
     [ui.tenantId, ui.unitId, ui.userName, repo, setUi],
   );
+
+  useEffect(() => {
+    if (!loaded || !isSignedIn || !canEdit(ui.role)) return;
+    let n = 0;
+    for (const data of Object.values(state.data)) {
+      n += (data.obligations ?? []).filter((o) => !String(o.aroAssetNumber ?? '').trim()).length;
+    }
+    if (!n) return;
+    apply(
+      'Assign ARO asset numbers',
+      'write',
+      `Assigned ${n} ARO asset number${n === 1 ? '' : 's'} where the listing left them blank.`,
+      (s) => {
+        for (const data of Object.values(s.data)) fillMissingAroAssetNumbers(data.obligations ?? []);
+      },
+    );
+  }, [loaded, isSignedIn, ui.role, state.data, apply]);
 
   const reset = useCallback(() => {
     setState(emptyAppState());
