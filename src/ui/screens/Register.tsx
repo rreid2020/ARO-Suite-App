@@ -34,8 +34,9 @@ import { isValidDate } from '../../engine/dates';
 import { SCOPING_REASONS, VARIANCE_CAUSES } from '../../seed';
 import { Block, UlYmInputs, currency, num, parseNumber, pct, SheetStatus, SheetTable, SheetTh, Stats, Tag, useSheet } from '../components';
 import { SheetFilter } from '../sheet';
-import { download, S } from '../../xlsx/write';
+import { download } from '../../xlsx/write';
 import { groupToneClass } from '../groupTone';
+import { listingSheet, listingWorkbookName } from './listingExport';
 import { ObligationExpand } from './measure';
 import { NewObligationForm } from './transactions';
 
@@ -125,6 +126,14 @@ const POSTED_COLUMNS: ColDef[] = [
 ];
 
 const POSTED_KEYS = new Set(POSTED_COLUMNS.map((c) => c.key));
+
+const EXPORT_MONEY_KEYS = new Set([
+  'openingFv', 'openingArc', 'openingAccumAmort',
+  ...POSTED_KEYS,
+  '_direct', '_cost', '_cce', '_fv', '_pv',
+  '_cost_eff', '_timing_eff', '_rate_eff', '_infl_eff', '_movement',
+  '_arc_gross', '_arc_accum', '_arc_nbv',
+]);
 
 const POSTED_BOOKS_KEYS = [
   'ref', 'description', 'site', 'aroAssetClassCode', 'aroAssetClassName', '_open_term',
@@ -544,48 +553,29 @@ export function Register() {
   /* ── export ─────────────────────────────────────────────────────────── */
 
   const exportXlsx = () => {
-    const head = ['Obligation Number', 'Description', 'Cost estimate date', 'Expected settlement', 'Direct cost',
-      'Contingency', 'Cost at current prices', 'Inflation', 'Leg 1 (yrs)', 'Escalated to FY end',
-      'Leg 2 (yrs)', 'Future value at settlement', 'Discount term (yrs)', 'Curve term', 'Rate', 'Provision'];
-
-    const rows: (string | number | { v?: string | number; f?: string; s?: number; t?: 'd' })[][] = [
-      [{ v: `${unit.entity} — ARO register`, s: S.title }],
-      [`Financial year end ${unit.fyEnd}`, `Day count ${unit.dayCount}`, `Term convention ${unit.termConvention}`,
-        `Curve ${derived.curve?.name ?? 'none'}`, `Inflation ${pct(unit.inflation)}`, `Contingency ${pct(unit.contingency)}`],
-      [],
-      head.map((h) => ({ v: h, s: S.head })),
-    ];
-
-    const first = rows.length + 1;
-    filtered.forEach((o, i) => {
-      const d = derived.byId.get(o.id)!;
-      const r = first + i;
-      // Every derived cell is a live formula referring only to cells in this
-      // sheet, so the workbook recalculates in Excel with no external reference.
-      rows.push([
-        o.ref, o.description,
-        { v: o.costEstimateDate, t: 'd' }, { v: d.settlementUsed, t: 'd' },
-        { v: d.direct, s: S.money },
-        { v: unit.contingency, s: S.rate },
-        { f: `E${r}*(1+F${r})`, s: S.money },
-        { v: unit.inflation, s: S.rate },
-        { f: `DAYS360(C${r},DATE(${unit.fyEnd.slice(0, 4)},${Number(unit.fyEnd.slice(5, 7))},${Number(unit.fyEnd.slice(8, 10))}),FALSE)/360`, s: S.term },
-        { f: `G${r}*(1+H${r})^I${r}`, s: S.money },
-        { v: d.t2, s: S.term },
-        { f: `J${r}*(1+H${r})^K${r}`, s: S.money },
-        { f: `DAYS360(DATE(${unit.fyEnd.slice(0, 4)},${Number(unit.fyEnd.slice(5, 7))},${Number(unit.fyEnd.slice(8, 10))}),D${r},FALSE)/360`, s: S.term },
-        { v: d.curveTerm, s: S.term },
-        { v: d.rate, s: S.rate },
-        { f: `IF(M${r}>0,L${r}/(1+O${r})^M${r},L${r})`, s: S.money },
-      ]);
-    });
-
-    const total = first + filtered.length;
-    rows.push([{ v: 'Total', s: S.bold }, '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-      { f: `SUM(P${first}:P${total - 1})`, s: S.money }]);
-
-    download(`${unit.entity.replace(/\W+/g, '-')}-register-${unit.fyEnd}.xlsx`, [
-      { name: 'Register', rows: rows as never, cols: [14, 34, 16, 16, 15, 11, 17, 10, 11, 17, 11, 17, 15, 11, 10, 15], freeze: 4 },
+    const totals: Record<string, number> = {};
+    for (const c of cols) {
+      if (!EXPORT_MONEY_KEYS.has(c.key)) continue;
+      totals[c.key] = filtered.reduce((s, o) => {
+        const raw = cellRaw(o, c.key, derived, booksById.get(o.id), postedById.get(o.id), ulById.get(o.id), openTermById.get(o.id), tcaByObl.get(o.id));
+        return s + (typeof raw === 'number' && Number.isFinite(raw) ? raw : 0);
+      }, 0);
+    }
+    const asAtLabel = asAt ? ` as at ${asAt.code}` : '';
+    download(listingWorkbookName(unit.entity, `register-${asAt?.code ?? unit.fyEnd}`), [
+      listingSheet({
+        name: 'Register',
+        title: `${unit.entity} — ARO register${asAtLabel} — ${set}`,
+        columns: cols.map((c) => ({
+          key: c.key,
+          header: c.label,
+          group: c.group,
+          kind: c.kind === 'date' ? 'date' : c.kind === 'number' || c.kind === 'derived' ? 'number' : 'text',
+          value: (o: Obligation) => cellRaw(o, c.key, derived, booksById.get(o.id), postedById.get(o.id), ulById.get(o.id), openTermById.get(o.id), tcaByObl.get(o.id)),
+        })),
+        rows: filtered,
+        totals: Object.keys(totals).length ? totals : undefined,
+      }),
     ]);
   };
 

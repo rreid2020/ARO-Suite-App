@@ -1,5 +1,5 @@
 /**
- * Excel workbooks for Opening register and ARO scoping listings.
+ * Excel workbooks for Opening register, ARO scoping listings, and the ARO register.
  * Combined sheets keep the same section headings as the on-screen groups.
  */
 
