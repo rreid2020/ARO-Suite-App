@@ -569,7 +569,6 @@ export function Register() {
         columns: cols.map((c) => ({
           key: c.key,
           header: c.label,
-          group: c.group,
           kind: c.kind === 'date' ? 'date' : c.kind === 'number' || c.kind === 'derived' ? 'number' : 'text',
           value: (o: Obligation) => cellRaw(o, c.key, derived, booksById.get(o.id), postedById.get(o.id), ulById.get(o.id), openTermById.get(o.id), tcaByObl.get(o.id)),
         })),
